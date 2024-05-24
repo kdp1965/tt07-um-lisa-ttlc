@@ -16,7 +16,7 @@ jobs:
       - name: Build GDS
         uses: TinyTapeout/tt-gds-action@tt07-openlane2
         with:
-          openlane-tag: 2.0.4
+          openlane-tag: 2.0.3
   
   precheck:
     needs: gds
