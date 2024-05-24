@@ -50,11 +50,8 @@
 	parameter LAMP_PREC_DW		=	8;
 	parameter LAMP_APPROX_MULS	=	$clog2 ((LAMP_FLOAT_DW+1)/LAMP_APPROX_DW);
 
-	typedef enum logic
-	{
-		FPU_RNDMODE_NEAREST		=	'd0,
-		FPU_RNDMODE_TRUNCATE	=	'd1
-	} rndModeFPU_t;
+   parameter FPU_RNDMODE_NEAREST	 = 1'b0;
+   parameter FPU_RNDMODE_TRUNCATE = 1'b1;
 
 	function logic [LAMP_FLOAT_S_DW+LAMP_FLOAT_E_DW+LAMP_FLOAT_F_DW-1:0] FUNC_splitOperand(input [LAMP_FLOAT_DW-1:0] op);
 		FUNC_splitOperand = op;

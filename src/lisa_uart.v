@@ -122,7 +122,9 @@ module lisa_uart
       .rx3       ( 1'b0                      ), // Input from the UART
       .wr        ( s_auto_brg_wr             ), // Write the baud rate
       .div       ( s_auto_brg_d              ), // The divisor
+    /* verilator lint_off PINCONNECTEMPTY */  
       .rx_sel    (                           )  // Selected RX input
+    /* verilator lint_on PINCONNECTEMPTY */  
    );
 
    assign s_brg_wr = brg_wr | s_auto_brg_wr;

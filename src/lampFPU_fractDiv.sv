@@ -66,7 +66,7 @@ output	logic								valid_o;
 // 						sequential logic						//
 //////////////////////////////////////////////////////////////////
 
-	always_ff @(posedge clk)
+	always @(posedge clk)
 	begin
 		if (rst)
 		begin
@@ -94,7 +94,7 @@ output	logic								valid_o;
 // 						combinational logic						//
 //////////////////////////////////////////////////////////////////
 
-	always_comb
+	always @*
 	begin
 		ss_next		=	ss;
 		n_tmp		=	n_r * r_r;

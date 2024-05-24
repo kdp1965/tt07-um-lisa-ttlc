@@ -21,7 +21,7 @@ module lampFPU_div_top (
    input  wire                      rst,
    input  wire                      do_div,
    input  wire                      padv_i,
-   input  rndModeFPU_t              rndMode_i,
+   input  wire                      rndMode_i,
    input  wire [LAMP_FLOAT_DW-1:0]  op1_i,
    input  wire [LAMP_FLOAT_DW-1:0]  op2_i,
    output reg  [LAMP_FLOAT_DW-1:0]  result_o,
@@ -30,7 +30,7 @@ module lampFPU_div_top (
 );
 
 // INPUT wires: to drive registered input
-	rndModeFPU_t							rndMode_r, rndMode_r_next;
+	reg          						rndMode_r, rndMode_r_next;
 
 // OUTPUT wires: to drive registered output
 	logic	[LAMP_FLOAT_DW-1:0]			result_o_next;
