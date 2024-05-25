@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
 #
-# OpenLane2 build script to harden the tt_top macro inside
-# the classic user_project_wrapper
+# OpenLane2 custom flow script to rename Yosys generated DFF instance names 
+# so they match their 'Q' output net names.
 #
-# Copyright (c) 2023 Sylvain Munaut <tnt@246tNt.com>
+# Copyright (c) 2024 Ken Pettit <pettitkd@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 #
 
@@ -32,7 +32,15 @@ class RenameYosysCells(Step):
 
       # Search the instLines for a Q, X or Y output
       for i in instLines:
+         # NOTE:  Changing non-DFF instance names generates hundreds
+         #        of warnings during STA about "pin not found".  It 
+         #        is maybe useful to if needed and you simply want
+         #        to ignore the STA warnings.
+
+         # Find the output of ANY instance
          #if '.Q(' in i or '.Y(' in i or '.X(' in i:
+
+         # Find the output of DFF instances only
          if '.Q(' in i:
             # Get the net name of the cell output
             netName = i.split('(')[1].split(')')[0].strip()
@@ -62,9 +70,11 @@ class RenameYosysCells(Step):
                if '.Q(' in i:
                   netName = netName + '_reg'
 
+            # Remove leading '\'
             if netName[0] == '\\':
                netName = netName[1:]
 
+            # Replace any brackets in the net name, like for Generated loops
             netName = netName.replace('[', '_').replace(']', '_')
 
             # Log our action
@@ -107,10 +117,14 @@ class RenameYosysCells(Step):
 
             # Test if we are in an instance
             if inInst:
+               # Append all lines to the instane definition
                instLines.append(line)
                if ');' in line:
                   # Instance closing found
                   inInst = False 
+
+                  # Write this instance to the output file, 
+                  # substituting the instance name if needed.
                   self.writeInst(o, l, instLines)
 
             # Test for start of instance
