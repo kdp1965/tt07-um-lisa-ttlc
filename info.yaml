@@ -40,11 +40,11 @@ project:
     - "lampFPU_div_top.sv"
     - "lampFPU_div.sv"
     - "lampFPU_fractDiv.sv"
-    - "lampFPU_utils.sv"
+    - "lampFPU_utils.v"
     - "mc14500b.sv"
     - "ttlc_io.v"
-    - "ttlc_inst_cache.s"
-    - "shift_reg_io.s"
+    - "ttlc_inst_cache.v"
+    - "shift_reg_io.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 pinout:
