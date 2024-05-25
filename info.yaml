@@ -41,7 +41,7 @@ project:
     - "lampFPU_div.sv"
     - "lampFPU_fractDiv.sv"
     - "lampFPU_utils.v"
-    - "mc14500b.sv"
+    - "mc14500b.v"
     - "ttlc_io.v"
     - "ttlc_inst_cache.v"
     - "shift_reg_io.v"
