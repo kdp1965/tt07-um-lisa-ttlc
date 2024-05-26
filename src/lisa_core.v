@@ -45,7 +45,6 @@ Uses a 14 (or 16) bit program word.  Shown is the 14-bit version.  For 16-bit, e
     10 0010 1100xxxx   rc                   If c==1, pc <= stack
     10 0010 1101xxxx   rets                 Return from ISR
     10 0010 1110xxxx   rz                   If z==1, pc <= stack
-    10 0010 1111xxxx   rz                   If z==1, pc <= stack
     10 0010 10100000   call ix              Call ix, ix <= ix + 1 (used for printf, etc.)
     10 0010 10101000   jmp ix               Jump to ix
     10 0010 10110000   xchg ra              Swap ix with ra
@@ -77,6 +76,8 @@ Uses a 14 (or 16) bit program word.  Shown is the 14-bit version.  For 16-bit, e
     10 1000 00100xxx   push a               Push acc (and cflag) to stack.
     10 1000 00110xxx   pop a                Pop acc (and cflag) from stack
     10 1000 010000ux   tax                  Transfer A to IX[7:0]/IX[14:8] based on u
+    10 1000 01001000   ldirq                A <= {irq_z, irq_c}
+    10 1000 01001001   stirq                {irq_z, irq_c} <= A
     10 1000 010100mm   amode                Set arithemetc mode ([signed:shift])
     10 1000 01011000   sra                  Save Return Address
     10 1000 01011001   lra                  Load Return Address
@@ -108,7 +109,7 @@ Uses a 14 (or 16) bit program word.  Shown is the 14-bit version.  For 16-bit, e
     10 1000 01111101 ff fcmp                Compare facc and fx
     10 1000 01111110 ff fdiv                Divide facc / fx (reserved for future, not implemented yet)
     10 1000 1100100000  itof                Convert 16-bit facc to bfloat facc
-    10 1000 1100110001  ftoi                Convert 16-bit facc to bfloat facc
+    10 1000 1100100001  ftoi                Convert 16-bit facc to bfloat facc
 
   Relative branch
     10 101b bbbbbbbb   bz    #imm9          Branch (+255 / -256) if zflag == 0
@@ -223,9 +224,12 @@ module lisa_core
    reg  [D_BITS-1:0 ]         sp;
    wire                       cflag;
    reg                        cflag_save;
+   reg                        cflag_isr;
    wire                       signed_inversion;
    reg                        signed_valid;
    reg                        signed_inv_save;
+   reg                        signed_inv_isr;
+   reg                        zflag_isr;
    wire                       zflag;
    reg  [2:0]                 state;
    (* keep = "true" *)
@@ -291,6 +295,7 @@ module lisa_core
    reg                        acc_ld_misc;
 `ifdef SIMULATION
    wire                       op_ret;
+   wire                       op_rets;
    wire                       op_rc;
    wire                       op_rz;
 `endif
@@ -330,6 +335,8 @@ module lisa_core
    wire                       op_swapi;
    wire                       op_sra;
    wire                       op_lra;
+   wire                       op_ldirq;
+   wire                       op_stirq;
    wire                       op_push_ix;
    wire                       op_pop_ix;
    wire                       op_st;
@@ -403,6 +410,8 @@ module lisa_core
    reg                        op_swapi_r;
    reg                        op_sra_r;
    reg                        op_lra_r;
+   reg                        op_ldirq_r;
+   reg                        op_stirq_r;
    reg                        op_push_ix_r;
    reg                        op_pop_ix_r;
    reg                        op_st_r;
@@ -515,8 +524,9 @@ module lisa_core
    assign ret_isr   =  (inst[`PWORD_SIZE-1 -: 10] == 10'b1000101101);                  // RETS
 `ifdef SIMULATION
    assign op_ret      = inst[`PWORD_SIZE-1 -: 9] == 9'b100010100;
-   assign op_rc       = inst[`PWORD_SIZE-1 -: 9] == 9'b100010110;
-   assign op_rz       = inst[`PWORD_SIZE-1 -: 9] == 9'b100010111;
+   assign op_rc       = inst[`PWORD_SIZE-1 -: 10] == 10'b1000101100;
+   assign op_rets     = inst[`PWORD_SIZE-1 -: 10] == 10'b1000101101;                  // RETS
+   assign op_rz       = inst[`PWORD_SIZE-1 -: 10] == 10'b1000101110;
 `endif
    assign op_adx      = inst[`PWORD_SIZE-1 -: 6] == 6'b100110;
    assign op_ldi      = inst[`PWORD_SIZE-1 -: 6] == 6'b100000;
@@ -550,6 +560,8 @@ module lisa_core
    assign op_btst     = inst[`PWORD_SIZE-1 -: 11] == 11'b10_1000_0001_0;
    assign op_sra      = inst[`PWORD_SIZE-1 -: 14] == 14'b10_1000_0101_1000;
    assign op_lra      = inst[`PWORD_SIZE-1 -: 14] == 14'b10_1000_0101_1001;
+   assign op_ldirq    = inst[`PWORD_SIZE-1 -: 14] == 14'b10_1000_0100_1000;
+   assign op_stirq    = inst[`PWORD_SIZE-1 -: 14] == 14'b10_1000_0100_1001;
    assign op_push_ix  = inst[`PWORD_SIZE-1 -: 14] == 14'b10_1000_0101_1010;
    assign op_pop_ix   = inst[`PWORD_SIZE-1 -: 14] == 14'b10_1000_0101_1011;
    assign op_lddiv    = inst[`PWORD_SIZE-1 -: 14] == 14'b10_1000_0101_1100;
@@ -592,8 +604,8 @@ module lisa_core
    assign op_fswap    = inst[`PWORD_SIZE-1 -: 14] == 14'b10100001111100;
    assign op_fcmp     = inst[`PWORD_SIZE-1 -: 14] == 14'b10100001111101;
    assign op_fdiv     = inst[`PWORD_SIZE-1 -: 14] == 14'b10100001111110;
-   assign op_itof     = inst[`PWORD_SIZE-1 -: 14] == 14'b10100011001000;
-   assign op_ftoi     = inst[`PWORD_SIZE-1 -: 14] == 14'b10100011001001;
+   assign op_itof     = inst[`PWORD_SIZE-1 -: 16] == 16'b1010001100100000;
+   assign op_ftoi     = inst[`PWORD_SIZE-1 -: 16] == 16'b1010001100100001;
 `endif
    assign op_brk      = WANT_DBG ? inst[`PWORD_SIZE-1 -: 14] == 14'b10100000011111 : 1'b0;
    assign op_div      = WANT_DIV ? inst[`PWORD_SIZE-1 -: 12] == 12'b10_1000_110000 : 1'b0;
@@ -746,6 +758,7 @@ module lisa_core
       op_xor_r:   acc_load_val = {1'b1, acc ^ d_i};
       op_lda_r || op_ldax_r:  acc_load_val = {1'b1, d_i};
       op_ld_misc_r:           if (acc_ld_misc) acc_load_val = {1'b1, acc_misc};  
+      op_ldirq_r: acc_load_val = {1'b1, 5'h0, signed_inv_isr, zflag_isr, cflag_isr};
       endcase
    end
 
@@ -797,6 +810,7 @@ module lisa_core
       op_cpx_ra: c_val                 = ix < ra;
       op_cpx_sp: c_val                 = ix < sp[D_BITS-1:0];
       op_restc_r:c_val                 = cflag_save;
+      ret_isr_r: c_val                 = cflag_isr;
       op_fdiv_r: c_val                 = fdiv_valid;
       op_fcmp_r:
             begin
@@ -863,6 +877,8 @@ module lisa_core
          op_swapi_r <= 1'b0;
          op_sra_r <= 1'b0;
          op_lra_r <= 1'b0;
+         op_ldirq_r <= 1'b0;
+         op_stirq_r <= 1'b0;
          op_push_ix_r <= 1'b0;
          op_pop_ix_r <= 1'b0;
          op_st_r <= 1'b0;
@@ -950,6 +966,8 @@ module lisa_core
          op_swapi_r <= op_swapi;
          op_sra_r <= op_sra;
          op_lra_r <= op_lra;
+         op_ldirq_r <= op_ldirq;
+         op_stirq_r <= op_stirq;
          op_push_ix_r <= op_push_ix;
          op_pop_ix_r <= op_pop_ix;
          op_st_r <= op_st;
@@ -1071,6 +1089,9 @@ module lisa_core
          d_we_r <= 1'b0;
          dbg_inc_r <= 1'b0;
          d_ready_r <= 1'b0;
+         cflag_isr <= 1'b0;
+         zflag_isr <= 1'b0;
+         signed_inv_isr <= 1'b0;
       end
       else
       begin
@@ -1090,6 +1111,9 @@ module lisa_core
             stage_two <= 1'b0;
             d_we_r <= 1'b0;
             dbg_inc_r <= 1'b0;
+            cflag_isr <= 1'b0;
+            zflag_isr <= 1'b0;
+            signed_inv_isr <= 1'b0;
          end
          else
          case (1'b1)
@@ -1175,7 +1199,10 @@ module lisa_core
                         ia <= pc_inc;
                         isr_jump <= 1'b1;
                         ie <= 1'b0;
-                        casez (int_i)
+                        cflag_isr <= cflag;
+                        zflag_isr <= zflag;
+                        signed_inv_isr <= signed_inv_save;
+                        casez (int_i & int_en)
                         8'b???????1: pc <= PC_BITS'(1);
                         8'b??????10: pc <= PC_BITS'(2);
                         8'b?????100: pc <= PC_BITS'(3);
@@ -1199,6 +1226,14 @@ module lisa_core
                         // Test for EI/DI
                         if (cond[0] && op_eidi_r)
                            ie <= inst[0];
+
+                        // Test for load of zflag_isr / cflag_isr
+                        if (cond[0] && op_stirq_r)
+                        begin
+                           cflag_isr <= acc[0];
+                           zflag_isr <= acc[1];
+                           signed_inv_isr <= acc[2];
+                        end
                      end
                      state <= 3'h0;
                   end
@@ -1231,7 +1266,8 @@ module lisa_core
                end
                else
                begin
-                  if (!op_any_div & !div_stage_two & !rem_stage_two)
+                  if (!op_any_div & !div_stage_two & !rem_stage_two &
+                      !op_fops & !op_fdiv_r)
                   begin
                      if (d_ok)
                      begin
@@ -1615,6 +1651,8 @@ module lisa_core
                op_fcmp_r:             {zflag_load, zflag_val} = {1'b1, facc == fx[inst[1:0]]};
             endcase
       end
+      else if (decode_state && cond[0] && ret_isr_r)
+         {zflag_load, zflag_val} = {1'b1, zflag_isr};
    end
 
    // =================================================
@@ -1638,6 +1676,8 @@ module lisa_core
                signed_inv_save <= signed_inversion;
             end
          end
+         else if (decode_state && cond[0] && ret_isr_r)
+            signed_inv_save <= signed_inv_isr;
       end
    end
 
@@ -1647,7 +1687,8 @@ module lisa_core
    ==========================================================================
    */
    wire cflag_load;
-   assign cflag_load = c_load && exec_state && cond[0] && d_ok;
+   assign cflag_load = (c_load && exec_state && cond[0] && d_ok) ||
+                       (decode_state && cond[0] && ret_isr_r);
 
    generate
    if (WANT_DIV)
@@ -1943,6 +1984,7 @@ module lisa_core
    wire [15:0] ftoi_val;
    (* keep = "true" *)
    reg  [15:0] facc_val;
+   reg         fdiv_r;
 
    always @*
    begin
@@ -1968,9 +2010,12 @@ module lisa_core
          f1 <= 16'h0;
          f2 <= 16'h0;
          f3 <= 16'h0;
+         fdiv_r <= 1'b0;
       end
       else
       begin
+         fdiv_r <= op_fdiv_r;
+
          // Load operations for floating point registers
          if (exec_state && cond[0])
          case (1'b1)
@@ -1982,7 +2027,6 @@ module lisa_core
                endcase
             end
          op_fmul_r: facc <= facc_val;
-         op_fdiv_r & fdiv_ready: facc <= facc_val;
          op_fadd_r: facc <= facc_val;
          op_fneg_r: case (inst[1:0])
                   2'h0:  f0[15] <= ~f0[15];
@@ -2001,7 +2045,10 @@ module lisa_core
                endcase
             end
          op_itof_r: facc <= facc_val;
+         op_ftoi_r: facc <= facc_val;
          endcase
+         else if (stg2_state & op_fdiv_r & fdiv_ready)
+            facc <= facc_val;
       end
    end
 
@@ -2048,16 +2095,16 @@ module lisa_core
    assign fdiv_op2 = fx[inst[1:0]] & {16{op_fdiv_r}};
    lampFPU_div_top i_bf16div
    (
-      .clk             ( clk             ),
-      .rst             ( !rst_n          ),
-      .do_div          ( op_fdiv_r       ),
-      .padv_i          ( fdiv_complete   ),
-      .rndMode_i       ( amode[2]        ),
-      .op1_i           ( facc            ),
-      .op2_i           ( fdiv_op2        ),
-      .result_o        ( fdiv_result     ),
-      .isResultValid_o ( fdiv_valid      ),
-      .isReady_o       ( fdiv_ready      )
+      .clk             ( clk                 ),
+      .rst             ( !rst_n              ),
+      .do_div          ( op_fdiv_r & !fdiv_r ),
+      .padv_i          ( fdiv_complete       ),
+      .rndMode_i       ( amode[2]            ),
+      .op1_i           ( facc                ),
+      .op2_i           ( fdiv_op2            ),
+      .result_o        ( fdiv_result         ),
+      .isResultValid_o ( fdiv_valid          ),
+      .isReady_o       ( fdiv_ready          )
    );
    assign fdiv_complete = !op_fdiv_r | fdiv_ready;
 `endif
@@ -2086,6 +2133,7 @@ module lisa_core
       if (op_jmp_ix)                               ascii_instr = "jmp ix";
       if (op_xchg_sp)                              ascii_instr = "xchg sp";
       if (op_xchg_ra)                              ascii_instr = "xchg ra";
+      if (op_xchg_ia)                              ascii_instr = "xchg ia";
       if (op_spix)                                 ascii_instr = "spix";
       if (op_mul)                                  ascii_instr = "mul";
       if (op_mulu)                                 ascii_instr = "mulu";
@@ -2107,6 +2155,19 @@ module lisa_core
       if (op_brk)                                  ascii_instr = "brk";
       if (op_push_ix)                              ascii_instr = "push_ix";
       if (op_pop_ix)                               ascii_instr = "pop_ix";
+      if (op_fdiv)                                 ascii_instr = "fdiv";
+      if (op_fmul)                                 ascii_instr = "fmul";
+      if (op_fadd)                                 ascii_instr = "fadd";
+      if (op_fneg)                                 ascii_instr = "fneg";
+      if (op_taf)                                  ascii_instr = "taf";
+      if (op_tfa)                                  ascii_instr = "tfa";
+      if (op_fswap)                                ascii_instr = "fswap";
+      if (op_itof)                                 ascii_instr = "itof";
+      if (op_ftoi)                                 ascii_instr = "ftoi";
+      if (op_fcmp)                                 ascii_instr = "fcmp";
+      if (op_ldirq)                                ascii_instr = "ldirq";
+      if (op_stirq)                                ascii_instr = "stirq";
+      if (op_eidi)                                 ascii_instr = "eidi";
       if (inst[`PWORD_SIZE-1 -: 11] == 11'h50E)    ascii_instr = "ldac";
       if (inst[`PWORD_SIZE-1] == 0)                ascii_instr = "jal";
       if (inst[`PWORD_SIZE-1 -: 6] == 6'h20)       ascii_instr = "ldi";
@@ -2115,6 +2176,7 @@ module lisa_core
       if (op_ret)                                  ascii_instr = "ret";
       if (op_rc)                                   ascii_instr = "rc";
       if (op_rz)                                   ascii_instr = "rz";
+      if (op_rets)                                 ascii_instr = "rets";
 `endif
       if (op_amode)                                ascii_instr = "amode";
       if (inst[`PWORD_SIZE-1 -: 6] == 6'h24)       ascii_instr = "adc";

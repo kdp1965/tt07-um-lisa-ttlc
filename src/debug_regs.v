@@ -264,7 +264,7 @@ module debug_regs
       else if (dbg_a[7:4] == 4'h4 && dbg_rd == 1'b1)
       begin
          case (dbg_a[3:0])
-         4'h0: dbg_do = {12'h0, ttlc_data_out, ttlc_data_in, ttlc_result_reg, ttlc_step, ttlc_run};
+         4'h0: dbg_do = {11'h0, ttlc_data_out, ttlc_data_in, ttlc_result_reg, ttlc_step, ttlc_run};
          4'h1: dbg_do = {4'h0, ttlc_pc};
          4'h8: dbg_do = {4'h0, ttlc_brk_addr0};
          4'h9: dbg_do = {4'h0, ttlc_brk_addr1};
