@@ -81,7 +81,9 @@ module tt_um_lisa
    // Control inputs
    input   wire            ena,              // Will go high when the design is enabled
    input   wire            clk,              // System clock 
+   /* verilator lint_off SYNCASYNCNET */
    input   wire            rst_n             // Active low reset
+   /* verilator lint_on SYNCASYNCNET */
 );
    // ==========================================================================
    // Debug bus signals
@@ -91,7 +93,9 @@ module tt_um_lisa
    wire                 baud_ref;
 
    reg  [2:0]           rst_n_r;
+   /* verilator lint_off SYNCASYNCNET */
    reg  [2:0]           rst_async_n_r;
+   /* verilator lint_on SYNCASYNCNET */
 
    // ==========================================================================
    // I/O mux control signals
@@ -338,15 +342,15 @@ module tt_um_lisa
    wire                 data_out;      // Data output pin, continuously assigned
    wire                 rr_value;      // RR output from MC14500B
 //   wire [31:0]          temp_storage;  // Temp storage bits
-   wire [63:0]          input_pins;    // External input pins
-   reg  [63:1]          output_pins;   // Driven from internal registers, renumbered
+   wire [47:0]          input_pins;    // External input pins
+   reg  [47:1]          output_pins;   // Driven from internal registers, renumbered
 
    // The shift register I/O interface
    wire                 ttlc_io_latch;
    wire                 ttlc_io_shiftclk;
    wire                 ttlc_io_start;
-   wire [3:0]           ttlc_out_data;
-   wire [3:0]           ttlc_in_data;
+   wire [2:0]           ttlc_out_data;
+   wire [2:0]           ttlc_in_data;
    wire [1:0]           clk_div;             // Clock division factor control (00: /2, 01: /4, 10: /8, 11: /16)
    wire [1:0]           input_depth;
    wire [1:0]           output_depth;

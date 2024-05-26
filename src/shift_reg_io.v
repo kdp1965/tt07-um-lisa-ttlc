@@ -32,28 +32,28 @@ module shift_reg_io
 (
    input  wire          clk,                 // System clock
    input  wire          rst_n,               // System reset
-   input  wire [3:0]    data_in,             // Serial data inputs
-   input  wire [63:1]   output_buffer,       // Input to the module, drives the serial output
+   input  wire [2:0]    data_in,             // Serial data inputs
+   input  wire [47:1]   output_buffer,       // Input to the module, drives the serial output
    input  wire [1:0]    clk_div,             // Clock division factor control (00: /2, 01: /4, 10: /8, 11: /16)
    input  wire          start,               // Start the I/O transfer
    input  wire [1:0]    input_depth,
    input  wire [1:0]    output_depth,
    output reg           complete,            // Indicates I/O transfer complete
-   output reg  [3:0]    data_out,            // Serial data outputs
+   output reg  [2:0]    data_out,            // Serial data outputs
    output reg           latch,               // Latch signal for external register control
    output reg           shift_clk,           // Shift clock output for external shift registers
-   output wire [63:0]   input_buffer         // Output from the module, captures the serial input
+   output wire [47:0]   input_buffer         // Output from the module, captures the serial input
 );
 
    // Parameters
-   localparam integer DATA_WIDTH   = 64;    // Total data width for input and output
+   localparam integer DATA_WIDTH   = 48;    // Total data width for input and output
    localparam integer SEG_WIDTH    = 16;     // Width of each data segment
 //   localparam integer SHIFT_CYCLES = 32;     // Number of cycles to shift each bit segment
    localparam [0:0]   IDLE         = 1'd0,
                       SHIFT_IO     = 1'd1;
                       
    wire [1:0]              max_depth;
-   wire [63:0]             output_comb;
+   wire [47:0]             output_comb;
 
    // Internal Registers for input buffer
    reg  [DATA_WIDTH-1:0]   input_buffer_reg;
@@ -87,7 +87,7 @@ module shift_reg_io
    begin
       if (~rst_n)
       begin
-         input_buffer_reg  <= 64'h0;
+         input_buffer_reg  <= 48'h0;
          clk_count         <= 4'h0;
          shift_clk         <= 1'b0;
          shift_count       <= 5'h0;              // Reset shift_count
@@ -130,7 +130,7 @@ module shift_reg_io
                      input_buffer_reg[6'(shift_count)] <= data_in[0];
                      input_buffer_reg[6'(shift_count) + 6'(SEG_WIDTH)] <= data_in[1];
                      input_buffer_reg[6'(shift_count) + 6'(2*SEG_WIDTH)] <= data_in[2];
-                     input_buffer_reg[6'(shift_count) + 6'(3*SEG_WIDTH)] <= data_in[3];
+                     //input_buffer_reg[6'(shift_count) + 6'(3*SEG_WIDTH)] <= data_in[3];
                   end
 
                   // Test if more output data to shift
@@ -139,7 +139,7 @@ module shift_reg_io
                      data_out[0] <= output_comb[6'(shift_count)];
                      data_out[1] <= output_comb[6'(shift_count) + 6'(SEG_WIDTH)];
                      data_out[2] <= output_comb[6'(shift_count) + 6'(2*SEG_WIDTH)];
-                     data_out[3] <= output_comb[6'(shift_count) + 6'(3*SEG_WIDTH)];
+//                     data_out[3] <= output_comb[6'(shift_count) + 6'(3*SEG_WIDTH)];
                   end
                   shift_count <= shift_count + 1;
                end

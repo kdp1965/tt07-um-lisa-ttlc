@@ -73,7 +73,9 @@ output	logic									isToRound_o;
 	// post normalization wires/regs
 	logic									s_res_postNorm;
 	logic	[1+1+LAMP_FLOAT_F_DW+3-1:0]		f_res_postNorm;			// still keep hidden bit and overflow bit (MSB) in the bitvector
+   /* verilator lint_off UNUSEDSIGNAL */
 	logic	[LAMP_FLOAT_E_DW+1-1:0]			e_res_postNorm;
+   /* verilator lint_on UNUSEDSIGNAL */
 
 	//	output next values
 	logic									s_res;

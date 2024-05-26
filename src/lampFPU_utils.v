@@ -71,7 +71,9 @@ endmodule
 
 module checkOperand
 (
+   /* verilator lint_off UNUSEDSIGNAL */
    input  wire [LAMP_FLOAT_DW-1:0]  op,
+   /* verilator lint_on UNUSEDSIGNAL */
    output reg  [5-1:0]              result
 );
 
@@ -115,7 +117,9 @@ module rndToNearestEven
 
    reg   								isAddOne;
    reg   [(1+1+LAMP_FLOAT_F_DW+3)-1:0] tempF_1;
+   /* verilator lint_off UNUSEDSIGNAL */
    reg   [(1+1+LAMP_FLOAT_F_DW+3)-1:0] tempF;
+   /* verilator lint_on UNUSEDSIGNAL */
 
    always @*
    begin

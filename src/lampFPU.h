@@ -51,7 +51,6 @@
 	parameter LAMP_APPROX_MULS	=	$clog2 ((LAMP_FLOAT_DW+1)/LAMP_APPROX_DW);
 
    parameter FPU_RNDMODE_NEAREST	 = 1'b0;
-   parameter FPU_RNDMODE_TRUNCATE = 1'b1;
 
 	function logic [LAMP_FLOAT_S_DW+LAMP_FLOAT_E_DW+LAMP_FLOAT_F_DW-1:0] FUNC_splitOperand(input [LAMP_FLOAT_DW-1:0] op);
 		FUNC_splitOperand = op;
@@ -167,6 +166,7 @@
 	*
 	* Output: the computed sticky bit
 	*/
+`ifdef DONT_COMPILE
 	function logic FUNC_addsub_calcStickyBit(
 					input logic [(1+LAMP_FLOAT_F_DW+3)-1:0] f_i,
 					input logic [(LAMP_FLOAT_E_DW+1)-1:0] num_shr_i
@@ -185,9 +185,12 @@
 					default:	FUNC_addsub_calcStickyBit = |f_i[3+:7];
 			    endcase
 		endfunction
+`endif
 
 	function logic[LAMP_APPROX_DW-1:0] FUNC_approxRecip(
+      /* verilator lint_off UNUSEDSIGNAL */
 		input [(1+LAMP_FLOAT_F_DW)-1:0] f_i
+      /* verilator lint_on UNUSEDSIGNAL */
 	);
 		case(f_i[(1+LAMP_FLOAT_F_DW)-2-:LAMP_APPROX_DW])
 			'b0000	:	FUNC_approxRecip = 'b1111;

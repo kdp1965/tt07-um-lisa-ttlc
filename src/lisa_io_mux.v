@@ -99,7 +99,9 @@ module lisa_io_mux
    // Tiny Tapeout I/O definitions
    input   wire [7:0]      ui_in,               // Connected to the input switches
    output  wire [7:0]      uo_out,              // Connected to the 7 segment display
+   /* verilator lint_off UNUSEDSIGNAL */
    input   wire [7:0]      uio_in,              // PMOD inputs
+   /* verilator lint_on UNUSEDSIGNAL */
    output  wire [7:0]      uio_out,             // PMOD outputs
    output  wire [7:0]      uio_oe,              // PMOD BIDIR Enable (0=input, 1=output)
    
@@ -142,8 +144,8 @@ module lisa_io_mux
    // TTLC I/O signals
    input  wire             ttlc_io_latch,
    input  wire             ttlc_io_shiftclk,
-   input  wire [3:0]       ttlc_out_data,
-   output wire [3:0]       ttlc_in_data,
+   input  wire [2:0]       ttlc_out_data,
+   output wire [2:0]       ttlc_in_data,
 
    // UART signals
    input  wire             baud_ref,            // Baud rate reference clock
@@ -250,13 +252,13 @@ module lisa_io_mux
    assign periph_sel2[0] = ttlc_out_data[0];
    assign periph_sel2[1] = ttlc_out_data[1];
    assign periph_sel2[2] = ttlc_out_data[2];
-   assign periph_sel2[3] = ttlc_out_data[3];
+   assign periph_sel2[3] = 1'b0; //ttlc_out_data[3];
    assign periph_sel2[4] = rx_sel == 2'h1 ? debug_tx : 1'b0;
    assign periph_sel2[5] = ttlc_io_latch;
    assign periph_sel2[6] = ttlc_io_shiftclk;
    assign periph_sel2[7] = 1'b0;
    
-   assign ttlc_in_data = ui_in[7:4];
+   assign ttlc_in_data = ui_in[6:4];
 
    // ==============================================================
    // Assign final output pins from the generated MUXes

@@ -207,6 +207,8 @@ module debug_regs
             4'h0: {ttlc_step, ttlc_run} <= dbg_di[1:0];
             4'h8: ttlc_brk_addr0 <= dbg_di[11:0];
             4'h9: ttlc_brk_addr1 <= dbg_di[11:0];
+            default:
+               ;
             endcase
          end
          else

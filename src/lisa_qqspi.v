@@ -32,7 +32,9 @@ module lisa_qqspi
    parameter CHIP_SELECTS = 2
  )
 (
+   /* verilator lint_off UNUSEDSIGNAL */
    input  wire [23:0]               addr,       // 8Mx32
+   /* verilator lint_on UNUSEDSIGNAL */
    output reg  [15:0]               rdata,      // Read data
    input  wire [15:0]               wdata,      // Data to write
    input  wire [1:0]                wstrb,      // Which bytes in the 32-bits to write

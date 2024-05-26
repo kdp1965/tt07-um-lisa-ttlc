@@ -72,11 +72,15 @@ module fmul
     output [16-1:0] result
 );
 
+    /* verilator lint_off UNUSEDSIGNAL */
     reg [`MULT_W-1:0] mul_fix_out;
+    /* verilator lint_on UNUSEDSIGNAL */
     reg [`M_W-1:0] M_result;
     wire [`EXP_W-1:0] e_result;
     wire sign;
+    /* verilator lint_off UNUSEDSIGNAL */
     reg [`EXP_W:0] e_result0;
+    /* verilator lint_on UNUSEDSIGNAL */
     reg overflow;
     reg zero_check;
     
@@ -150,7 +154,9 @@ module itobf16
    // First we convert to 32-bit float, then round and truncate to 
    // bfloat16 format since they have the same exponent format.
    reg  [31:0]  pre_round;
+   /* verilator lint_off UNUSEDSIGNAL */
    reg  [31:0]  out32;
+   /* verilator lint_on UNUSEDSIGNAL */
    reg  [15:0]  sig;
    wire [15:0]  mask;
    reg  [7:0]   exp;

@@ -34,7 +34,7 @@ class RenameYosysCells(Step):
       for i in instLines:
          # NOTE:  Changing non-DFF instance names generates hundreds
          #        of warnings during STA about "pin not found".  It 
-         #        is maybe useful to if needed and you simply want
+         #        is maybe useful to do if needed and you simply want
          #        to ignore the STA warnings.
 
          # Find the output of ANY instance
@@ -75,7 +75,7 @@ class RenameYosysCells(Step):
                netName = netName[1:]
 
             # Replace any brackets in the net name, like for Generated loops
-            netName = netName.replace('[', '_').replace(']', '_')
+            netName = netName.replace('[', '_').replace(']', '_').replace('#', '_')
 
             # Log our action
             print(f'Renaming {instName} to {netName}', file=l)

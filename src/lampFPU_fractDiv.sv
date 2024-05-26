@@ -39,8 +39,10 @@ output	logic								valid_o;
 //						internal wires							//
 //////////////////////////////////////////////////////////////////
 
+   /* verilator lint_off UNUSEDSIGNAL */
 	logic	[2*(1+LAMP_FLOAT_F_DW+LAMP_PREC_DW)-1:0] 	n_tmp;
 	logic	[2*(1+LAMP_FLOAT_F_DW+LAMP_PREC_DW)-1:0] 	d_tmp;
+   /* verilator lint_on UNUSEDSIGNAL */
 	logic	[(1+LAMP_FLOAT_F_DW+LAMP_PREC_DW)-1:0]		n_r, n_next;
 	logic	[(1+LAMP_FLOAT_F_DW+LAMP_PREC_DW)-1:0]		d_r, d_next;
 	logic	[(1+LAMP_FLOAT_F_DW+LAMP_PREC_DW)-1:0]		r_r, r_next;

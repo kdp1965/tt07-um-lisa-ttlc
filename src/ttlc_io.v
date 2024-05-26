@@ -37,8 +37,8 @@ module ttlc_io
    input  wire          mem_write,     // Memory write enable
    input  wire          data_in,       // Data input for writes
    input  wire          rr_value,      // RR output from MC14500B
-   input  wire [63:0]   input_pins,    // External input pins
-   output reg  [63:1]   output_pins,   // Driven from internal registers, renumbered
+   input  wire [47:0]   input_pins,    // External input pins
+   output reg  [47:1]   output_pins,   // Driven from internal registers, renumbered
    (* keep = "true" *)
    output wire          data_out,      // Data output pin, continuously assigned
    output wire [7:0]    port_out,
@@ -53,7 +53,7 @@ module ttlc_io
    wire [167:0] read_values;
 
    // Assign values to the large vector
-   assign read_values = {port_in, temp_storage, input_pins, output_pins, rr_value};
+   assign read_values = {port_in, temp_storage, 16'h0, input_pins, 16'h0, output_pins, rr_value};
    assign port_out = temp_storage[7:0];
    assign ttlc_int = temp_storage[8];
 
@@ -68,14 +68,14 @@ module ttlc_io
       begin
          // Reset temporary storage and output registers when RST is high
          temp_storage <= 32'b0;
-         output_pins <= 63'b0;
+         output_pins <= 47'b0;
       end
       else
       begin
          if (mem_write)
          begin
             // Test if writing to output_pins or temp_storage
-            if (address >= 1 && address <= 63)
+            if (address >= 1 && address < 48)
                output_pins[address] <= data_in;
 
             // Writing to temp_storage
