@@ -343,7 +343,7 @@ module tt_um_lisa
    wire                 rr_value;      // RR output from MC14500B
 //   wire [31:0]          temp_storage;  // Temp storage bits
    wire [47:0]          input_pins;    // External input pins
-   reg  [47:1]          output_pins;   // Driven from internal registers, renumbered
+   reg  [47:0]          output_pins;   // Driven from internal registers, renumbered
 
    // The shift register I/O interface
    wire                 ttlc_io_latch;

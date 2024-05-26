@@ -33,7 +33,7 @@ module shift_reg_io
    input  wire          clk,                 // System clock
    input  wire          rst_n,               // System reset
    input  wire [2:0]    data_in,             // Serial data inputs
-   input  wire [47:1]   output_buffer,       // Input to the module, drives the serial output
+   input  wire [47:0]   output_buffer,       // Input to the module, drives the serial output
    input  wire [1:0]    clk_div,             // Clock division factor control (00: /2, 01: /4, 10: /8, 11: /16)
    input  wire          start,               // Start the I/O transfer
    input  wire [1:0]    input_depth,
@@ -69,7 +69,7 @@ module shift_reg_io
                       (clk_div == 2'b01) ? 3 :
                       (clk_div == 2'b10) ? 7 :
                       15;                 // Default to 15 for clk_div == 2'b11
-   assign output_comb = {output_buffer, 1'b0};
+   assign output_comb = {output_buffer};
 
    always @*
    begin
@@ -92,7 +92,7 @@ module shift_reg_io
          shift_clk         <= 1'b0;
          shift_count       <= 5'h0;              // Reset shift_count
          state             <= IDLE;
-         latch             <= 1'b0;
+         latch             <= 1'b1;
          complete          <= 1'b0;
       end
       else
@@ -114,7 +114,7 @@ module shift_reg_io
                begin
                   complete    <= 1'b0;
                   shift_count <= 5'h0;    // Reset shift count at start of operation
-                  latch       <= 1'b1;       // Pulse to capture inputs before shifting
+                  latch       <= 1'b0;       // Pulse to capture inputs before shifting
                   state       <= SHIFT_IO;
                end
             end
@@ -144,9 +144,9 @@ module shift_reg_io
                   shift_count <= shift_count + 1;
                end
                if (shift_count == {{1'b0, output_depth[0]} + 2'h1, 3'h0})  // Check if we've shifted all bits
-                  latch    <= 1'b1;     // Pulse to latch the outputs after the final shifting
+                  latch    <= 1'b0;     // Pulse to latch the outputs after the final shifting
                else
-                  latch    <= 1'b0;
+                  latch    <= 1'b1;
 
                if (shift_count == 5'(cycles))
                begin
