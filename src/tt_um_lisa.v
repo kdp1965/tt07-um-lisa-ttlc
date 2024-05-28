@@ -354,7 +354,8 @@ module tt_um_lisa
    wire [1:0]           clk_div;             // Clock division factor control (00: /2, 01: /4, 10: /8, 11: /16)
    wire [1:0]           input_depth;
    wire [1:0]           output_depth;
-   wire                 io_complete;
+   wire                 io_busy;
+   reg                  io_busy_r;
    wire [7:0]           ttlc_to_lisa;
    wire [7:0]           lisa_to_ttlc;
    wire                 ttlc_int;
@@ -365,6 +366,7 @@ module tt_um_lisa
    wire   [11:0]        ttlc_i_addr;
    wire   [15:0]        ttlc_inst;
    wire                 ttlc_i_ready;
+   reg                  ttlc_i_ready_r;
    wire                 ttlc_i_fetch;
 
    // ==========================================================================
@@ -996,9 +998,14 @@ module tt_um_lisa
          mc14500_stack[1] <= 13'h0;
          mc14500_stack[2] <= 13'h0;
          mc14500_stack[3] <= 13'h0;
+         ttlc_i_ready_r   <= 1'b0;
+         io_busy_r        <= 1'b0;
       end
       else
       begin
+         ttlc_i_ready_r   <= ttlc_i_ready;
+         io_busy_r        <= io_busy;
+
          // Only update if we are running
          if (mc14500_run)
          begin
@@ -1031,6 +1038,8 @@ module tt_um_lisa
                // TODO: Test if QSPI contains stack items. If it does
                //       then we need to restore from QSPI.
             end
+            else if (ttlc_i_ready)
+               mc14500_pc <= mc14500_pc + 1;
          end
       end
    end
@@ -1087,9 +1096,9 @@ module tt_um_lisa
       .inst_cache_invalidate_ack ( ttlc_cache_invalidate_ack )
    );
 
-   assign ttlc_i_fetch = 1'b1;
+   assign ttlc_i_fetch = !ttlc_halt;
    assign ttlc_i_addr  = mc14500_pc;
-   assign mc14500_run  = ttlc_i_ready && io_complete && !ttlc_halt;
+   assign mc14500_run  = ttlc_i_ready && !io_busy && !io_busy_r && !ttlc_halt && !FLAG_O;
 
    // ==========================================================================
    // I/O for the MC14500B
@@ -1130,14 +1139,14 @@ module tt_um_lisa
       .start                     ( ttlc_io_start             ), // Start the I/O transfer
       .input_depth               ( input_depth               ),
       .output_depth              ( output_depth              ),
-      .complete                  ( io_complete               ), // Indicates I/O transfer complete
+      .io_busy                   ( io_busy                   ), // Indicates I/O transfer complete
       .data_out                  ( ttlc_out_data             ), // Serial data outputs
       .latch                     ( ttlc_io_latch             ), // Latch signal for external register control
       .shift_clk                 ( ttlc_io_shiftclk          ), // Shift clock output for external shift registers
       .input_buffer              ( input_pins                )  // Output from the module, captures the serial input
    );
 
-   assign ttlc_io_start = FLAG_O | FLAG_F;
+   assign ttlc_io_start = FLAG_O;
 
 endmodule // tt_um_lisa
 

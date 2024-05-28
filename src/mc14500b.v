@@ -1,3 +1,32 @@
+/*
+==============================================================================
+mc14500b.v:  Implementation of the Motorola MC14500B.
+
+Copyright 2024 by Ken Pettit <pettitkd@gmail.com>
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+
+==============================================================================
+*/
 
 module mc14500b
 (
@@ -30,6 +59,7 @@ module mc14500b
    reg                  r_flagF;
    reg                  r_sto1;
    reg                  r_sto2;
+   reg                  r_run;
 
    wire                 op_ld;
    wire                 op_ldc;
@@ -63,25 +93,33 @@ module mc14500b
    We also latch the O and F flags on falling edge, so do them here also.
    ================================================================================
    */
+   always @*
+      if (r_skip)
+         r_inst = 4'h0;
+      else
+         r_inst = inst_in;
+
    always @(negedge clk)
    begin
       if (RST)
       begin
-         r_inst <= 4'h0;
+//         r_inst <= 4'h0;
          r_data <= 1'b0;
          r_flagO <= 1'b0;
          r_flagF <= 1'b0;
+         r_run <= 1'b0;
       end
       else
       begin
+         r_run <= run;
          // Allow updates only if the processor is running
-         if (run)
+         if (r_run)
          begin
             // For SKP opcode, we load NOPO to skip the opcode
-            if (r_skip)
-               r_inst <= 4'h0;
-            else
-               r_inst <= inst_in;
+//            if (r_skip)
+//               r_inst <= 4'h0;
+//            else
+//               r_inst <= inst_in;
 
             // Latch the input data
             r_data <= r_ien & DATA;
@@ -97,6 +135,11 @@ module mc14500b
                r_flagF <= 1'b1;
             else
                r_flagF <= 1'b0;
+         end
+         else
+         begin
+            r_flagO <= 1'b0;
+            r_flagF <= 1'b0;
          end
       end
    end
@@ -130,13 +173,13 @@ module mc14500b
    begin
       if (RST)
       begin
-         r_oen <= 1'b0;
-         r_ien <= 1'b0;
+         r_oen <= 1'b1;
+         r_ien <= 1'b1;
       end
       else
       begin
          // Allow updates only if the processor is running
-         if (run)
+         if (r_run)
          begin
             // During an OEN instruction, set the r_oen register based on DATA
             if (op_oen)
@@ -161,7 +204,7 @@ module mc14500b
       else
       begin
          // Allow updates only if the processor is running
-         if (run)
+         if (r_run)
          begin
             // Process RR opcodes 
             case (1'b1)
@@ -189,7 +232,7 @@ module mc14500b
       else
       begin
          // Allow updates only if the processor is running
-         if (run)
+         if (r_run)
          begin
             if (op_skz && r_rr == 1'b0)
                r_skip <= 1'b1;
@@ -222,7 +265,7 @@ module mc14500b
             r_sto1 <= 1'b0;
 
          // Allow updates only if the processor is running
-         else if (run)
+         else if (r_run)
          begin
             // Test for incomming sto or stoc
             if (inst_in == 4'h8 || inst_in == 4'h9)
@@ -246,6 +289,37 @@ module mc14500b
          r_sto2 <= r_sto1;
       end
    end
+
+`ifdef SIMULATION
+   reg [63:0] ascii_instr;
+
+   /*
+   ==================================================
+   Assign ascii_instr 
+   ==================================================
+   */
+   always @*
+   begin
+      case (inst_in)
+      4'h0:                   ascii_instr = "NOPO";
+      4'h1:                   ascii_instr = "LD";
+      4'h2:                   ascii_instr = "LDC";
+      4'h3:                   ascii_instr = "AND";
+      4'h4:                   ascii_instr = "ANDC";
+      4'h5:                   ascii_instr = "OR";
+      4'h6:                   ascii_instr = "ORC";
+      4'h7:                   ascii_instr = "XNOR";
+      4'h8:                   ascii_instr = "STO";
+      4'h9:                   ascii_instr = "STOC";
+      4'ha:                   ascii_instr = "IEN";
+      4'hb:                   ascii_instr = "OEN";
+      4'hc:                   ascii_instr = "JMP";
+      4'hd:                   ascii_instr = "RTN";
+      4'he:                   ascii_instr = "SKZ";
+      4'hf:                   ascii_instr = "NOPF";
+      endcase
+   end
+`endif
 
 endmodule
 

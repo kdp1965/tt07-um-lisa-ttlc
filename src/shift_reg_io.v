@@ -38,7 +38,7 @@ module shift_reg_io
    input  wire          start,               // Start the I/O transfer
    input  wire [1:0]    input_depth,
    input  wire [1:0]    output_depth,
-   output reg           complete,            // Indicates I/O transfer complete
+   output reg           io_busy,             // Indicates I/O transfer busy
    output reg  [2:0]    data_out,            // Serial data outputs
    output reg           latch,               // Latch signal for external register control
    output reg           shift_clk,           // Shift clock output for external shift registers
@@ -62,6 +62,7 @@ module shift_reg_io
    reg  [4:0]              shift_count;      // Count for the number of shifts performed
    reg  [0:0]              state;
    reg  [4:0]              cycles;
+   reg                     shift_clk_r;
 
    assign max_depth = input_depth > output_depth ? input_depth : output_depth;
    assign input_buffer = input_buffer_reg; // Assign the internal register to the output
@@ -93,10 +94,13 @@ module shift_reg_io
          shift_count       <= 5'h0;              // Reset shift_count
          state             <= IDLE;
          latch             <= 1'b1;
-         complete          <= 1'b0;
+         io_busy           <= 1'b0;
+         shift_clk_r       <= 1'b0;
       end
       else
       begin
+         shift_clk_r <= shift_clk;
+
          // Clock division for shift_clk
          if (clk_count >= max_count)
          begin
@@ -112,7 +116,7 @@ module shift_reg_io
             begin
                if (start)
                begin
-                  complete    <= 1'b0;
+                  io_busy     <= 1'b1;
                   shift_count <= 5'h0;    // Reset shift count at start of operation
                   latch       <= 1'b0;       // Pulse to capture inputs before shifting
                   state       <= SHIFT_IO;
@@ -121,15 +125,15 @@ module shift_reg_io
 
             SHIFT_IO:
             begin
-               if (shift_clk && clk_count == 0)  // Operate on rising edge of shift_clk
+               if (shift_clk_r && !shift_clk && clk_count == 0)  // Operate on rising edge of shift_clk
                begin  
                   // Test if more input data to shift
                   if (shift_count[4:3] <= {1'b0, input_depth[0]})
                   begin
                      // Shifting input data in, and preparing output data
-                     input_buffer_reg[6'(shift_count)] <= data_in[0];
-                     input_buffer_reg[6'(shift_count) + 6'(SEG_WIDTH)] <= data_in[1];
-                     input_buffer_reg[6'(shift_count) + 6'(2*SEG_WIDTH)] <= data_in[2];
+                     input_buffer_reg[SEG_WIDTH-1:0]             <= {input_buffer_reg[SEG_WIDTH-2:0], data_in[0]};
+                     input_buffer_reg[2*SEG_WIDTH-1:SEG_WIDTH]   <= {input_buffer_reg[2*SEG_WIDTH-2:SEG_WIDTH], data_in[1]};
+                     input_buffer_reg[3*SEG_WIDTH-1:2*SEG_WIDTH] <= {input_buffer_reg[3*SEG_WIDTH-2:2*SEG_WIDTH], data_in[2]};
                      //input_buffer_reg[6'(shift_count) + 6'(3*SEG_WIDTH)] <= data_in[3];
                   end
 
@@ -141,8 +145,9 @@ module shift_reg_io
                      data_out[2] <= output_comb[6'(shift_count) + 6'(2*SEG_WIDTH)];
 //                     data_out[3] <= output_comb[6'(shift_count) + 6'(3*SEG_WIDTH)];
                   end
-                  shift_count <= shift_count + 1;
                end
+               if (shift_clk && clk_count == 0)  // Operate on rising edge of shift_clk
+                  shift_count <= shift_count + 1;
                if (shift_count == {{1'b0, output_depth[0]} + 2'h1, 3'h0})  // Check if we've shifted all bits
                   latch    <= 1'b0;     // Pulse to latch the outputs after the final shifting
                else
@@ -150,7 +155,7 @@ module shift_reg_io
 
                if (shift_count == 5'(cycles))
                begin
-                  complete <= 1'b1;
+                  io_busy  <= 1'b0;
                   state    <= IDLE;
                end
             end

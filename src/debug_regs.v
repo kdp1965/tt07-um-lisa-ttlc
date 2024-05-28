@@ -156,8 +156,8 @@ module debug_regs
          input_depth       <= 2'h0;
          output_depth      <= 2'h0;
          clk_div           <= 2'h0;
-         ttlc_brk_addr0    <= 12'h0;
-         ttlc_brk_addr1    <= 12'h0;
+         ttlc_brk_addr0    <= 12'hfff;
+         ttlc_brk_addr1    <= 12'hfff;
          ttlc_run          <= 1'b0;
          ttlc_step         <= 1'b0;
       end
