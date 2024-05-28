@@ -134,16 +134,14 @@ module shift_reg_io
                      input_buffer_reg[SEG_WIDTH-1:0]             <= {input_buffer_reg[SEG_WIDTH-2:0], data_in[0]};
                      input_buffer_reg[2*SEG_WIDTH-1:SEG_WIDTH]   <= {input_buffer_reg[2*SEG_WIDTH-2:SEG_WIDTH], data_in[1]};
                      input_buffer_reg[3*SEG_WIDTH-1:2*SEG_WIDTH] <= {input_buffer_reg[3*SEG_WIDTH-2:2*SEG_WIDTH], data_in[2]};
-                     //input_buffer_reg[6'(shift_count) + 6'(3*SEG_WIDTH)] <= data_in[3];
                   end
 
                   // Test if more output data to shift
                   if (shift_count[4:3] <= {1'b0, output_depth[0]})
                   begin
-                     data_out[0] <= output_comb[6'(shift_count)];
-                     data_out[1] <= output_comb[6'(shift_count) + 6'(SEG_WIDTH)];
-                     data_out[2] <= output_comb[6'(shift_count) + 6'(2*SEG_WIDTH)];
-//                     data_out[3] <= output_comb[6'(shift_count) + 6'(3*SEG_WIDTH)];
+                     data_out[0] <= output_comb[15 - 6'(shift_count)];
+                     data_out[1] <= output_comb[31 - 6'(shift_count)];
+                     data_out[2] <= output_comb[47 - 6'(shift_count)];
                   end
                end
                if (shift_clk && clk_count == 0)  // Operate on rising edge of shift_clk
