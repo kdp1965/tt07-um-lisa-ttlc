@@ -49,6 +49,10 @@ class RenameYosysCells(Step):
             if netName[0] == '_' and netName[-1] == '_':
                continue
 
+            # Ensure the instance name is default
+            if instName[0] == '_' or instName[-1] != '_'
+               continue
+
             # Check for vector 
             if netName[-1] == ']':
                # Find the opening bracket
