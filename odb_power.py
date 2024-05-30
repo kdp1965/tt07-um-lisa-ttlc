@@ -34,13 +34,12 @@ def power(reader, macro_x_pos: float):
   vgnd_bpin = vgnd_bterm.getBPins()[0]
   for i in range(3):
     x = int(macro_x_pos * 1000) + 18280 + i * 153600
-    #odb.dbSBox_create(vpwr_wire, met4, x, 2480, x + 1600, 152120, "STRIPE")
-    odb.dbSBox_create(vpwr_wire, met4, x, 2480, x + 1600, 164120, "STRIPE")
-    odb.dbBox_create(vpwr_bpin, met4, x, 2480, x + 1600, 164120)
+    odb.dbSBox_create(vpwr_wire, met4, x, 2480, x + 1600, 223280, "STRIPE")
+    odb.dbBox_create(vpwr_bpin, met4, x, 2480, x + 1600, 223280)
   for i in range(2):
     x = int(macro_x_pos * 1000) + 95080 + i * 153600
-    odb.dbSBox_create(vgnd_wire, met4, x, 2480, x + 1600, 164120, "STRIPE")
-    odb.dbBox_create(vgnd_bpin, met4, x, 2480, x + 1600, 164120)
+    odb.dbSBox_create(vgnd_wire, met4, x, 2480, x + 1600, 223280, "STRIPE")
+    odb.dbBox_create(vgnd_bpin, met4, x, 2480, x + 1600, 223280)
 
 if __name__ == "__main__":
   power()
