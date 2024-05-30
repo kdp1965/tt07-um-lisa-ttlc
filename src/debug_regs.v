@@ -56,13 +56,13 @@ module debug_regs
    output reg  [CHIP_SELECTS -1:0]  debug_ce_ctrl,
 
    output reg  [CHIP_SELECTS -1:0]  lisa1_ce_ctrl,
-   output reg  [15:0]         lisa1_base_addr,
+   output wire [15:0]         lisa1_base_addr,
 
    output reg  [CHIP_SELECTS -1:0]  lisa2_ce_ctrl,
-   output reg  [15:0]         lisa2_base_addr,
+   output wire [15:0]         lisa2_base_addr,
 
    output reg  [CHIP_SELECTS -1:0]  ttlc_ce_ctrl,
-   output reg  [15:0]         ttlc_base_addr,
+   output wire [15:0]         ttlc_base_addr,
 
    output reg  [CHIP_SELECTS-1:0] addr_16b,
    output reg  [CHIP_SELECTS-1:0] is_flash,
@@ -75,7 +75,7 @@ module debug_regs
    output reg  [6:0]          spi_ce_delay,
    output reg  [1:0]          spi_mode,
 
-   output reg  [15:0]         output_mux_bits,
+   output wire [15:0]         output_mux_bits,
    output reg  [7:0]          io_mux_bits,
 
    output reg                 cache_disabled,
@@ -90,8 +90,8 @@ module debug_regs
    input  wire                ttlc_cache_invalidate_ack,
 
    output reg  [1:0]          clk_div,
-   output reg  [1:0]          input_depth,
-   output reg  [1:0]          output_depth,
+//   output reg  [1:0]          input_depth,
+//   output reg  [1:0]          output_depth,
 
    input  wire [11:0]         ttlc_pc,
    output wire                ttlc_halt,
@@ -104,10 +104,29 @@ module debug_regs
    wire        debug_qspi_write;
    wire        debug_qspi_read;
    reg  [7:0]  cmd_quad_write_r;
-   reg  [11:0] ttlc_brk_addr0;
-   reg  [11:0] ttlc_brk_addr1;
+   wire [12:0] ttlc_brk_addr0;
+   wire [12:0] ttlc_brk_addr1;
    reg         ttlc_step;
    reg         ttlc_run;
+   wire        dbg_addr_12;
+   wire        dbg_addr_13;
+   wire        dbg_addr_1b;
+   wire        dbg_addr_1f;
+   wire        dbg_addr_48;
+   wire        dbg_addr_49;
+   (* keep = "true" *)
+   wire        dbg_we_12;
+   (* keep = "true" *)
+   wire        dbg_we_13;
+   (* keep = "true" *)
+   wire        dbg_we_1b;
+   (* keep = "true" *)
+   wire        dbg_we_1f;
+   (* keep = "true" *)
+   wire        dbg_we_48;
+   (* keep = "true" *)
+   wire        dbg_we_49;
+
 
    // We transfer a single 16-bit value on the debug interface
    assign debug_qspi_write = (dbg_a == 8'h20 || dbg_a == 8'h21) && dbg_we;
@@ -121,6 +140,75 @@ module debug_regs
    assign debug_wdata    = debug_qspi_write ? dbg_di : 16'h0;
    assign debug_wstrb    = {debug_qspi_write, debug_qspi_write};
 
+   assign dbg_addr_12 = dbg_a == 8'h12;
+   assign dbg_addr_13 = dbg_a == 8'h13;
+   assign dbg_addr_1b = dbg_a == 8'h1b;
+   assign dbg_addr_1f = dbg_a == 8'h1f;
+   assign dbg_addr_48 = dbg_a == 8'h48;
+   assign dbg_addr_49 = dbg_a == 8'h49;
+
+   sky130_fd_sc_hd__and2_4 and_12( .A(dbg_addr_12), .B(dbg_we), .X(dbg_we_12) );
+   sky130_fd_sc_hd__and2_4 and_13( .A(dbg_addr_13), .B(dbg_we), .X(dbg_we_13) );
+   sky130_fd_sc_hd__and2_4 and_1b( .A(dbg_addr_1b), .B(dbg_we), .X(dbg_we_1b) );
+   sky130_fd_sc_hd__and2_4 and_1f( .A(dbg_addr_1f), .B(dbg_we), .X(dbg_we_1f) );
+   sky130_fd_sc_hd__and2_4 and_48( .A(dbg_addr_48), .B(dbg_we), .X(dbg_we_48) );
+   sky130_fd_sc_hd__and2_4 and_49( .A(dbg_addr_49), .B(dbg_we), .X(dbg_we_49) );
+
+   // ===================================================================
+   // We are generating latches for most of the static flops
+   // ===================================================================
+   generate
+   genvar b;
+      for (b = 0; b < 16; b = b + 1)
+      begin : BASE_BITS
+         sky130_fd_sc_hd__dlrtp_1   lisa1_base_latch
+         (
+            .RESET_B    ( rst_n              ),
+            .GATE       ( dbg_we_12          ),
+            .D          ( dbg_di[b]          ),
+            .Q          ( lisa1_base_addr[b] )
+         );
+         sky130_fd_sc_hd__dlrtp_1   lisa2_base_latch
+         (
+            .RESET_B    ( rst_n              ),
+            .GATE       ( dbg_we_13          ),
+            .D          ( dbg_di[b]          ),
+            .Q          ( lisa2_base_addr[b] )
+         );
+         sky130_fd_sc_hd__dlrtp_1   output_mux_latch
+         (
+            .RESET_B    ( rst_n              ),
+            .GATE       ( dbg_we_1b          ),
+            .D          ( dbg_di[b]          ),
+            .Q          ( output_mux_bits[b] )
+         );
+         sky130_fd_sc_hd__dlrtp_1   ttlc_base_latch
+         (
+            .RESET_B    ( rst_n              ),
+            .GATE       ( dbg_we_1f          ),
+            .D          ( dbg_di[b]          ),
+            .Q          ( ttlc_base_addr[b]  )
+         );
+      end
+      for (b = 0; b < 13; b = b + 1)
+      begin : BREAK_BITS
+         sky130_fd_sc_hd__dlrtp_1   ttlc_brk0_latch
+         (
+            .RESET_B    ( rst_n              ),
+            .GATE       ( dbg_we_48          ),
+            .D          ( dbg_di[b]          ),
+            .Q          ( ttlc_brk_addr0[b]  )
+         );
+         sky130_fd_sc_hd__dlrtp_1   ttlc_brk1_latch
+         (
+            .RESET_B    ( rst_n              ),
+            .GATE       ( dbg_we_49          ),
+            .D          ( dbg_di[b]          ),
+            .Q          ( ttlc_brk_addr1[b]  )
+         );
+      end
+   endgenerate
+         
    // ===================================================================
    // The Debug QSPI address register
    // ===================================================================
@@ -129,9 +217,9 @@ module debug_regs
       if (~rst_n)
       begin
          debug_addr        <= 24'h0;
-         lisa1_base_addr   <= 16'h0;
-         lisa2_base_addr   <= 16'h0;
-         ttlc_base_addr    <= 16'h0;
+//         lisa1_base_addr   <= 16'h0;
+//         lisa2_base_addr   <= 16'h0;
+//         ttlc_base_addr    <= 16'h0;
          lisa1_ce_ctrl     <= {{(CHIP_SELECTS-1){1'b0}}, 1'b1};
          lisa2_ce_ctrl     <= {{(CHIP_SELECTS-1){1'b0}}, 1'b1};
          ttlc_ce_ctrl      <= {{(CHIP_SELECTS-1){1'b0}}, 1'b1};
@@ -142,7 +230,7 @@ module debug_regs
          dummy_read_cycles <= {{((CHIP_SELECTS-1)*4){1'b0}}, 4'ha};
          cmd_quad_write_r  <= 8'h38;
          plus_guard_time   <= 4'h1;
-         output_mux_bits   <= 16'h0;
+//         output_mux_bits   <= 16'h0;
          io_mux_bits       <= 8'h0;
          cache_disabled    <= 1'b0;
          cache_map_sel     <= 2'h3;
@@ -153,11 +241,11 @@ module debug_regs
          data_cache_invalidate <=1'b0;
          inst_cache_invalidate <= 1'b0;
          ttlc_cache_invalidate <= 1'b0;
-         input_depth       <= 2'h0;
-         output_depth      <= 2'h0;
+//         input_depth       <= 2'h0;
+//         output_depth      <= 2'h0;
          clk_div           <= 2'h0;
-         ttlc_brk_addr0    <= 12'hfff;
-         ttlc_brk_addr1    <= 12'hfff;
+//         ttlc_brk_addr0    <= 12'hfff;
+//         ttlc_brk_addr1    <= 12'hfff;
          ttlc_run          <= 1'b0;
          ttlc_step         <= 1'b0;
       end
@@ -168,8 +256,8 @@ module debug_regs
             case (dbg_a[3:0])    
                4'h0: debug_addr[15:0] <= dbg_di;
                4'h1: debug_addr[23:16] <= dbg_di[7:0];
-               4'h2: lisa1_base_addr <= dbg_di;
-               4'h3: lisa2_base_addr <= dbg_di;
+//               4'h2: lisa1_base_addr <= dbg_di;
+//               4'h3: lisa2_base_addr <= dbg_di;
                4'h4: lisa1_ce_ctrl <= dbg_di[CHIP_SELECTS -1:0];
                4'h5: {ttlc_ce_ctrl, lisa2_ce_ctrl} <= dbg_di[CHIP_SELECTS*2 -1:0];
                4'h6: debug_ce_ctrl <= dbg_di[CHIP_SELECTS -1:0];
@@ -177,13 +265,14 @@ module debug_regs
                4'h8: dummy_read_cycles <= dbg_di[CHIP_SELECTS*4-1:0];
                4'h9: cmd_quad_write_r <= dbg_di[7:0];
                4'ha: plus_guard_time <= dbg_di[3:0];
-               4'hb: output_mux_bits <= dbg_di;
-               4'hc: {output_depth, input_depth, clk_div, io_mux_bits} <= dbg_di[13:0];
+//               4'hb: output_mux_bits <= dbg_di;
+              // 4'hc: {output_depth, input_depth, clk_div, io_mux_bits} <= dbg_di[13:0];
+               4'hc: {clk_div, io_mux_bits} <= dbg_di[9:0];
                4'hd: {ttlc_cache_invalidate, inst_cache_invalidate, data_cache_invalidate, data_cache_flush,
                         cache_disabled, cache_map_sel} <= dbg_di[6:0];
    
                4'he: {spi_mode, spi_ce_delay, spi_clk_div} <= dbg_di[12:0];
-               4'hf: ttlc_base_addr <= dbg_di;
+//               4'hf: ttlc_base_addr <= dbg_di;
                default: begin end
             endcase
          end
@@ -205,16 +294,16 @@ module debug_regs
          begin
             case (dbg_a[3:0])    
             4'h0: {ttlc_step, ttlc_run} <= dbg_di[1:0];
-            4'h8: ttlc_brk_addr0 <= dbg_di[11:0];
-            4'h9: ttlc_brk_addr1 <= dbg_di[11:0];
+//            4'h8: ttlc_brk_addr0 <= dbg_di[11:0];
+//            4'h9: ttlc_brk_addr1 <= dbg_di[11:0];
             default:
                ;
             endcase
          end
          else
          begin
-            if ((ttlc_brk_addr0 == ttlc_pc ||
-                ttlc_brk_addr1 == ttlc_pc) && !ttlc_step)
+            if ((ttlc_brk_addr0 == {1'b1, ttlc_pc} ||
+                ttlc_brk_addr1 == {1'b1, ttlc_pc}) && !ttlc_step)
             begin
                ttlc_run <= 1'b0;
             end
@@ -246,7 +335,8 @@ module debug_regs
          4'h9: dbg_do = {8'h0, cmd_quad_write_r};
          4'ha: dbg_do = {12'h0, plus_guard_time};
          4'hb: dbg_do = output_mux_bits;
-         4'hc: dbg_do = {2'h0, output_depth, input_depth, clk_div, io_mux_bits};
+         //4'hc: dbg_do = {2'h0, output_depth, input_depth, clk_div, io_mux_bits};
+         4'hc: dbg_do = {6'h0, clk_div, io_mux_bits};
          4'hd: dbg_do = {9'h0, ttlc_cache_invalidate, inst_cache_invalidate, data_cache_invalidate,
                          data_cache_flush, cache_disabled, cache_map_sel};
          4'he: dbg_do = {3'h0, spi_mode, spi_ce_delay, spi_clk_div};
@@ -268,8 +358,8 @@ module debug_regs
          case (dbg_a[3:0])
          4'h0: dbg_do = {11'h0, ttlc_data_out, ttlc_data_in, ttlc_result_reg, ttlc_step, ttlc_run};
          4'h1: dbg_do = {4'h0, ttlc_pc};
-         4'h8: dbg_do = {4'h0, ttlc_brk_addr0};
-         4'h9: dbg_do = {4'h0, ttlc_brk_addr1};
+         4'h8: dbg_do = {3'h0, ttlc_brk_addr0};
+         4'h9: dbg_do = {3'h0, ttlc_brk_addr1};
          default dbg_do = 16'h0;
          endcase
       end

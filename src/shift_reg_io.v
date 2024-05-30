@@ -36,10 +36,8 @@ module shift_reg_io
    input  wire [47:0]   output_buffer,       // Input to the module, drives the serial output
    input  wire [1:0]    clk_div,             // Clock division factor control (00: /2, 01: /4, 10: /8, 11: /16)
    input  wire          start,               // Start the I/O transfer
-   input  wire [1:0]    input_depth,
-   input  wire [1:0]    output_depth,
    output reg           io_busy,             // Indicates I/O transfer busy
-   output reg  [2:0]    data_out,            // Serial data outputs
+   output wire [2:0]    data_out,            // Serial data outputs
    output reg           latch,               // Latch signal for external register control
    output reg           shift_clk,           // Shift clock output for external shift registers
    output wire [47:0]   input_buffer         // Output from the module, captures the serial input
@@ -48,39 +46,36 @@ module shift_reg_io
    // Parameters
    localparam integer DATA_WIDTH   = 48;    // Total data width for input and output
    localparam integer SEG_WIDTH    = 16;     // Width of each data segment
-//   localparam integer SHIFT_CYCLES = 32;     // Number of cycles to shift each bit segment
-   localparam [0:0]   IDLE         = 1'd0,
-                      SHIFT_IO     = 1'd1;
+   localparam [1:0]   IDLE         = 2'd0,
+                      SHIFT_IO     = 2'd1,
+                      LATCH        = 2'd2,
+                      SHIFT_DONE   = 2'd3;
                       
-   wire [1:0]              max_depth;
-   wire [47:0]             output_comb;
+   wire [15:0]             output_vec[2:0];
+//   wire [3:0]              output_idx;
 
    // Internal Registers for input buffer
    reg  [DATA_WIDTH-1:0]   input_buffer_reg;
    reg  [3:0]              clk_count;        // Counter for clock division
    wire [3:0]              max_count;        // Maximum count value based on clk_div
-   reg  [4:0]              shift_count;      // Count for the number of shifts performed
-   reg  [0:0]              state;
-   reg  [4:0]              cycles;
-   reg                     shift_clk_r;
+   reg  [3:0]              shift_count;      // Count for the number of shifts performed
+   reg  [1:0]              state;
+   reg  [1:0]              after_state;
+   reg                     last_clk;
 
-   assign max_depth = input_depth > output_depth ? input_depth : output_depth;
    assign input_buffer = input_buffer_reg; // Assign the internal register to the output
    assign max_count = (clk_div == 2'b00) ? 1 :
                       (clk_div == 2'b01) ? 3 :
                       (clk_div == 2'b10) ? 7 :
                       15;                 // Default to 15 for clk_div == 2'b11
-   assign output_comb = {output_buffer};
 
-   always @*
-   begin
-      case (max_depth)
-      2'h0: cycles = 5'h8;
-      2'h1: cycles = 5'h16;
-      2'h2: cycles = 5'h16;
-      2'h3: cycles = 5'h16;
-      endcase
-   end
+   assign output_vec[0] = output_buffer[15:0];
+   assign output_vec[1] = output_buffer[31:16];
+   assign output_vec[2] = output_buffer[47:32];
+//   assign output_idx    = 4'd15 - shift_count;
+   assign data_out[0] = output_vec[0][shift_count];
+   assign data_out[1] = output_vec[1][shift_count];
+   assign data_out[2] = output_vec[2][shift_count];
 
    // State Machine for controlling the process
    // Clock and shift logic
@@ -91,25 +86,14 @@ module shift_reg_io
          input_buffer_reg  <= 48'h0;
          clk_count         <= 4'h0;
          shift_clk         <= 1'b0;
-         shift_count       <= 5'h0;              // Reset shift_count
+         shift_count       <= 4'h0;              // Reset shift_count
          state             <= IDLE;
+         after_state       <= IDLE;
          latch             <= 1'b1;
          io_busy           <= 1'b0;
-         shift_clk_r       <= 1'b0;
       end
       else
       begin
-         shift_clk_r <= shift_clk;
-
-         // Clock division for shift_clk
-         if (clk_count >= max_count)
-         begin
-            clk_count <= 4'h0;
-            shift_clk <= ~shift_clk;  // Toggle shift clock
-         end
-         else
-            clk_count <= clk_count + 1;
-         
          // State machine for shifting data
          case (state)
             IDLE:
@@ -117,47 +101,86 @@ module shift_reg_io
                if (start)
                begin
                   io_busy     <= 1'b1;
-                  shift_count <= 5'h0;    // Reset shift count at start of operation
+                  shift_count <= 4'hf;       // Reset shift count at start of operation
+                  last_clk    <= 1'b0;
                   latch       <= 1'b0;       // Pulse to capture inputs before shifting
-                  state       <= SHIFT_IO;
+                  state       <= LATCH;
+                  after_state <= SHIFT_IO;
+                  clk_count   <= max_count;
+//                  data_out[0] <= output_vec[0][15];
+//                  data_out[1] <= output_vec[0][15];
+//                  data_out[2] <= output_vec[0][15];
                end
+               else
+                  latch    <= 1'b1;
             end
 
             SHIFT_IO:
             begin
-               if (shift_clk_r && !shift_clk && clk_count == 0)  // Operate on rising edge of shift_clk
-               begin  
-                  // Test if more input data to shift
-                  if (shift_count[4:3] <= {1'b0, input_depth[0]})
-                  begin
-                     // Shifting input data in, and preparing output data
-                     input_buffer_reg[SEG_WIDTH-1:0]             <= {input_buffer_reg[SEG_WIDTH-2:0], data_in[0]};
-                     input_buffer_reg[2*SEG_WIDTH-1:SEG_WIDTH]   <= {input_buffer_reg[2*SEG_WIDTH-2:SEG_WIDTH], data_in[1]};
-                     input_buffer_reg[3*SEG_WIDTH-1:2*SEG_WIDTH] <= {input_buffer_reg[3*SEG_WIDTH-2:2*SEG_WIDTH], data_in[2]};
-                  end
+               latch    <= 1'b1;
 
-                  // Test if more output data to shift
-                  if (shift_count[4:3] <= {1'b0, output_depth[0]})
-                  begin
-                     data_out[0] <= output_comb[15 - 6'(shift_count)];
-                     data_out[1] <= output_comb[31 - 6'(shift_count)];
-                     data_out[2] <= output_comb[47 - 6'(shift_count)];
-                  end
-               end
-               if (shift_clk && clk_count == 0)  // Operate on rising edge of shift_clk
-                  shift_count <= shift_count + 1;
-               if (shift_count == {{1'b0, output_depth[0]} + 2'h1, 3'h0})  // Check if we've shifted all bits
-                  latch    <= 1'b0;     // Pulse to latch the outputs after the final shifting
-               else
-                  latch    <= 1'b1;
-
-               if (shift_count == 5'(cycles))
+               // Clock division for shift_clk
+               if (clk_count == 4'h0)
                begin
-                  io_busy  <= 1'b0;
-                  state    <= IDLE;
+                  clk_count   <= max_count;
+                  if (shift_clk | ~last_clk)
+                     shift_clk   <= ~shift_clk;  // Toggle shift clock
+               end
+               else
+                  clk_count <= clk_count - 1;
+               
+               // Update input data at the rising edge of shift_clk
+               if (!shift_clk && clk_count == 0)  // Operate on rising edge of shift_clk
+               begin  
+                  // Shifting input data in, and preparing output data
+                  input_buffer_reg[SEG_WIDTH-1:0]             <= {input_buffer_reg[SEG_WIDTH-2:0], data_in[0]};
+                  input_buffer_reg[2*SEG_WIDTH-1:SEG_WIDTH]   <= {input_buffer_reg[2*SEG_WIDTH-2:SEG_WIDTH], data_in[1]};
+                  input_buffer_reg[3*SEG_WIDTH-1:2*SEG_WIDTH] <= {input_buffer_reg[3*SEG_WIDTH-2:2*SEG_WIDTH], data_in[2]};
+               end
+
+               // Update output data at the falling edge of shift_clk
+//               if (shift_clk && clk_count == 0)  // Operate on rising edge of shift_clk
+//               begin  
+//                  data_out[0] <= output_vec[0][output_idx];
+//                  data_out[1] <= output_vec[1][output_idx];
+//                  data_out[2] <= output_vec[2][output_idx];
+//               end
+
+               // Update the shift count
+               if (shift_clk && clk_count == 0 && !last_clk)  // Operate on rising edge of shift_clk
+                  shift_count <= shift_count - 1;
+
+               //if (shift_count == CYCLES && shift_clk == 1'b0) // && clk_count == 4'h0)
+               if (shift_count == 0 && shift_clk == 1'b1)
+                  last_clk <= 1'b1;
+               else if (last_clk && clk_count == 0)
+               begin
+                  last_clk    <= 1'b0;
+                  latch       <= 1'b0;     // Pulse to latch the outputs after the final shifting
+                  state       <= LATCH;
+                  clk_count   <= max_count;
+                  after_state <= SHIFT_DONE;
                end
             end
 
+            LATCH:
+            begin
+               shift_clk <= 1'b0;
+               if (clk_count == 4'h0)
+               begin
+                  clk_count <= max_count;
+                  latch     <= 1'b1;
+                  state     <= after_state;
+               end
+               else
+                  clk_count <= clk_count - 1;
+            end
+
+            SHIFT_DONE:
+            begin
+               io_busy <= 1'b0;
+               state   <= IDLE;
+            end
          endcase
       end
    end

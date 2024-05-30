@@ -207,16 +207,28 @@ module lampFPU_div_top (
 // 			operands pre-processing	- sequential logic			//
 //////////////////////////////////////////////////////////////////
 
+   always_comb
+   begin
+      s_op1_r			=	s_op1_wire;
+      extE_op1_r		=	extE_op1_wire;
+      isInf_op1_r		=	isInf_op1_wire;
+      isZ_op1_r		=	isZ_op1_wire;
+      isSNAN_op1_r	=	isSNAN_op1_wire;
+      isQNAN_op1_r	=	isQNAN_op1_wire;
+      extShF_op1_r	=	extShF_op1_wire;
+      nlz_op1_r		=	nlz_op1_wire;
+   end
+
 	always_ff @(posedge clk)
 	begin
 		if (rst)
 		begin
-			s_op1_r			<=	'0;
-			extE_op1_r		<=	'0;
-			isInf_op1_r		<=	'0;
-			isZ_op1_r		<=	'0;
-			isSNAN_op1_r	<=	'0;
-			isQNAN_op1_r	<=	'0;
+//			s_op1_r			<=	'0;
+//			extE_op1_r		<=	'0;
+//			isInf_op1_r		<=	'0;
+//			isZ_op1_r		<=	'0;
+//			isSNAN_op1_r	<=	'0;
+//			isQNAN_op1_r	<=	'0;
 			s_op2_r			<=	'0;
 			extE_op2_r		<=	'0;
 			isInf_op2_r		<=	'0;
@@ -224,19 +236,19 @@ module lampFPU_div_top (
 			isSNAN_op2_r	<=	'0;
 			isQNAN_op2_r	<=	'0;
 			//	mul/div only
-			extShF_op1_r	<=	'0;
-			nlz_op1_r		<=	'0;
+//			extShF_op1_r	<=	'0;
+//			nlz_op1_r		<=	'0;
 			extShF_op2_r	<=	'0;
 			nlz_op2_r		<=	'0;
 		end
 		else
 		begin
-			s_op1_r			<=	s_op1_wire;
-			extE_op1_r		<=	extE_op1_wire;
-			isInf_op1_r		<=	isInf_op1_wire;
-			isZ_op1_r		<=	isZ_op1_wire;
-			isSNAN_op1_r	<=	isSNAN_op1_wire;
-			isQNAN_op1_r	<=	isQNAN_op1_wire;
+//			s_op1_r			<=	s_op1_wire;
+//			extE_op1_r		<=	extE_op1_wire;
+//			isInf_op1_r		<=	isInf_op1_wire;
+//			isZ_op1_r		<=	isZ_op1_wire;
+//			isSNAN_op1_r	<=	isSNAN_op1_wire;
+//			isQNAN_op1_r	<=	isQNAN_op1_wire;
 			s_op2_r			<=	s_op2_wire;
 			extE_op2_r		<=	extE_op2_wire;
 			isInf_op2_r		<=	isInf_op2_wire;
@@ -244,8 +256,8 @@ module lampFPU_div_top (
 			isSNAN_op2_r	<=	isSNAN_op2_wire;
 			isQNAN_op2_r	<=	isQNAN_op2_wire;
 			//	mul/div only
-			extShF_op1_r	<=	extShF_op1_wire;
-			nlz_op1_r		<=	nlz_op1_wire;
+//			extShF_op1_r	<=	extShF_op1_wire;
+//			nlz_op1_r		<=	nlz_op1_wire;
 			extShF_op2_r	<=	extShF_op2_wire;
 			nlz_op2_r		<=	nlz_op2_wire;
 		end

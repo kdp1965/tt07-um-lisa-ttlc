@@ -161,7 +161,7 @@ module lisa_core
       parameter PC_BITS        = 15,
       parameter D_BITS         = 15,       // NOTE: Up to PC_BITS
       parameter WANT_DBG       = 1,
-      parameter DBG_BRKPOINTS  = 6
+      parameter DBG_BRKPOINTS  = 5
 )
 (
    input                      clk,

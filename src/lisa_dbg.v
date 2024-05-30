@@ -106,13 +106,13 @@ module lisa_dbg
    reg               halted;
    wire              cont;
    wire [PC_BITS:0]  brk_r[DBG_BRKPOINTS-1:0];
-   reg  [PC_BITS:0]  brk_r0;
-   reg  [PC_BITS:0]  brk_r1;
-   reg  [PC_BITS:0]  brk_r2;
-   reg  [PC_BITS:0]  brk_r3;
+   wire [PC_BITS:0]  brk_r0;
+   wire [PC_BITS:0]  brk_r1;
+   wire [PC_BITS:0]  brk_r2;
+   wire [PC_BITS:0]  brk_r3;
 `ifdef SIX_BREAK
-   reg  [PC_BITS:0]  brk_r4;
-   reg  [PC_BITS:0]  brk_r5;
+   wire [PC_BITS:0]  brk_r4;
+   wire [PC_BITS:0]  brk_r5;
 `endif
    reg               brk_halt;
    reg               d_access_r;
@@ -124,6 +124,24 @@ module lisa_dbg
    wire [3:0]        pc_bits;
    wire              d_active;
 	integer				i;
+   wire              dbg_addr_08;
+   wire              dbg_addr_09;
+   wire              dbg_addr_0a;
+   wire              dbg_addr_0b;
+   wire              dbg_addr_0c;
+   wire              dbg_addr_0d;
+   (* keep = "true" *)
+   wire              dbg_we_08;
+   (* keep = "true" *)
+   wire              dbg_we_09;
+   (* keep = "true" *)
+   wire              dbg_we_0a;
+   (* keep = "true" *)
+   wire              dbg_we_0b;
+   (* keep = "true" *)
+   wire              dbg_we_0c;
+   (* keep = "true" *)
+   wire              dbg_we_0d;
 
    assign d_o      = dbg_di[7:0];
    assign d_access = (dbg_we | dbg_rd) && dbg_a == 8'h6 && halted;
@@ -142,13 +160,13 @@ module lisa_dbg
          access_state <= 2'h0;
          d_access_r <= 1'b0;
          d_active_r <= 1'b0;
-         brk_r0 <= 16'h0;
-         brk_r1 <= 16'h0;
-         brk_r2 <= 16'h0;
-         brk_r3 <= 16'h0;
+//         brk_r0 <= 16'h0;
+//         brk_r1 <= 16'h0;
+//         brk_r2 <= 16'h0;
+//         brk_r3 <= 16'h0;
 `ifdef SIX_BREAK
-         brk_r4 <= 16'h0;
-         brk_r5 <= 16'h0;
+//         brk_r4 <= 16'h0;
+//         brk_r5 <= 16'h0;
 `endif
          //d_we   <= 1'b0;
          d_rd   <= 1'b0;
@@ -179,6 +197,7 @@ module lisa_dbg
          d_access_r <= d_access;
          d_active_r <= d_active;
 
+`ifdef DONT_COMPILE
          // Breakpoint register write
          if (dbg_we & dbg_a[3])
          begin
@@ -197,6 +216,7 @@ module lisa_dbg
                brk_r5 <= dbg_di[PC_BITS:0];
 `endif
          end
+`endif
 
          // Data bus register write
          if (dbg_we & dbg_a == 8'h7)
@@ -239,6 +259,69 @@ module lisa_dbg
             endcase
       end
    end
+
+   assign dbg_addr_08 = dbg_a == 8'h08;
+   assign dbg_addr_09 = dbg_a == 8'h09;
+   assign dbg_addr_0a = dbg_a == 8'h0a;
+   assign dbg_addr_0b = dbg_a == 8'h0b;
+   assign dbg_addr_0c = dbg_a == 8'h0c;
+   assign dbg_addr_0d = dbg_a == 8'h0d;
+
+   sky130_fd_sc_hd__and2_4 and_08( .A(dbg_addr_08), .B(dbg_we), .X(dbg_we_08) );
+   sky130_fd_sc_hd__and2_4 and_09( .A(dbg_addr_09), .B(dbg_we), .X(dbg_we_09) );
+   sky130_fd_sc_hd__and2_4 and_0a( .A(dbg_addr_0a), .B(dbg_we), .X(dbg_we_0a) );
+   sky130_fd_sc_hd__and2_4 and_0b( .A(dbg_addr_0b), .B(dbg_we), .X(dbg_we_0b) );
+   sky130_fd_sc_hd__and2_4 and_0c( .A(dbg_addr_0c), .B(dbg_we), .X(dbg_we_0c) );
+   sky130_fd_sc_hd__and2_4 and_0d( .A(dbg_addr_0d), .B(dbg_we), .X(dbg_we_0d) );
+
+   generate
+   genvar b;
+      for (b = 0; b < 16; b = b + 1)
+      begin : LISA_BRK_BITS
+         sky130_fd_sc_hd__dlrtp_1   brk_r0_latch
+         (
+            .RESET_B    ( rst_n              ),
+            .GATE       ( dbg_we_08          ),
+            .D          ( dbg_di[b]          ),
+            .Q          ( brk_r0[b]          )
+         );
+         sky130_fd_sc_hd__dlrtp_1   brk_r1_latch
+         (
+            .RESET_B    ( rst_n              ),
+            .GATE       ( dbg_we_09          ),
+            .D          ( dbg_di[b]          ),
+            .Q          ( brk_r1[b]          )
+         );
+         sky130_fd_sc_hd__dlrtp_1   brk_r2_latch
+         (
+            .RESET_B    ( rst_n              ),
+            .GATE       ( dbg_we_0a          ),
+            .D          ( dbg_di[b]          ),
+            .Q          ( brk_r2[b]          )
+         );
+         sky130_fd_sc_hd__dlrtp_1   brk_r3_latch
+         (
+            .RESET_B    ( rst_n              ),
+            .GATE       ( dbg_we_0b          ),
+            .D          ( dbg_di[b]          ),
+            .Q          ( brk_r3[b]          )
+         );
+         sky130_fd_sc_hd__dlrtp_1   brk_r4_latch
+         (
+            .RESET_B    ( rst_n              ),
+            .GATE       ( dbg_we_0c          ),
+            .D          ( dbg_di[b]          ),
+            .Q          ( brk_r4[b]          )
+         );
+         sky130_fd_sc_hd__dlrtp_1   brk_r5_latch
+         (
+            .RESET_B    ( rst_n              ),
+            .GATE       ( dbg_we_0d          ),
+            .D          ( dbg_di[b]          ),
+            .Q          ( brk_r5[b]          )
+         );
+      end
+   endgenerate
 
    /*
    ================================================================

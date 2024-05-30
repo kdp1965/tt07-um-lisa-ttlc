@@ -60,6 +60,7 @@ module mc14500b
    reg                  r_sto1;
    reg                  r_sto2;
    reg                  r_run;
+   reg                  r_stall;
 
    wire                 op_ld;
    wire                 op_ldc;
@@ -75,6 +76,7 @@ module mc14500b
    wire                 op_jmp;
    wire                 op_rtn;
    wire                 op_skz;
+   wire                 op_nopf;
 
    wire [3:0]           inst_in;
 
@@ -93,34 +95,35 @@ module mc14500b
    We also latch the O and F flags on falling edge, so do them here also.
    ================================================================================
    */
-   always @*
-      if (r_skip)
-         r_inst = 4'h0;
-      else
-         r_inst = inst_in;
+//   always @*
+//      if (r_skip)
+//         r_inst = 4'h0;
+//      else
+//         r_inst = inst_in;
 
    always @(negedge clk)
    begin
       if (RST)
       begin
-//         r_inst <= 4'h0;
+         r_inst <= 4'h0;
          r_data <= 1'b0;
          r_flagO <= 1'b0;
          r_flagF <= 1'b0;
-         r_run <= 1'b0;
       end
       else
       begin
-         r_run <= run;
-         // Allow updates only if the processor is running
-         if (r_run)
+         if (run | r_run)
          begin
             // For SKP opcode, we load NOPO to skip the opcode
-//            if (r_skip)
-//               r_inst <= 4'h0;
-//            else
-//               r_inst <= inst_in;
+            if (r_skip)
+               r_inst <= 4'h0;
+            else
+               r_inst <= inst_in;
+         end
 
+         // Allow updates only if the processor is running
+         if (r_run && !r_stall)
+         begin
             // Latch the input data
             r_data <= r_ien & DATA;
 
@@ -163,6 +166,7 @@ module mc14500b
    assign op_jmp  = r_inst == 4'hC;
    assign op_rtn  = r_inst == 4'hD;
    assign op_skz  = r_inst == 4'hE;
+   assign op_nopf = inst_in == 4'hF;
 
    /*
    ================================================================================
@@ -173,13 +177,23 @@ module mc14500b
    begin
       if (RST)
       begin
-         r_oen <= 1'b1;
-         r_ien <= 1'b1;
+         r_oen   <= 1'b1;
+         r_ien   <= 1'b1;
+         r_stall <= 1'b0;
+         r_run   <= 1'b0;
       end
       else
       begin
-         // Allow updates only if the processor is running
+         // Register the run signal
+         r_run <= run;
+
          if (r_run)
+            r_stall <= op_jmp | op_rtn | op_nopf;
+         else
+            r_stall <= 1'b0;
+
+         // Allow updates only if the processor is running
+         if (r_run & !r_stall)
          begin
             // During an OEN instruction, set the r_oen register based on DATA
             if (op_oen)
@@ -204,7 +218,7 @@ module mc14500b
       else
       begin
          // Allow updates only if the processor is running
-         if (r_run)
+         if (r_run & !r_stall)
          begin
             // Process RR opcodes 
             case (1'b1)
@@ -232,7 +246,7 @@ module mc14500b
       else
       begin
          // Allow updates only if the processor is running
-         if (r_run)
+         if (r_run & !r_stall)
          begin
             if (op_skz && r_rr == 1'b0)
                r_skip <= 1'b1;
@@ -265,7 +279,7 @@ module mc14500b
             r_sto1 <= 1'b0;
 
          // Allow updates only if the processor is running
-         else if (r_run)
+         else if (r_run & !r_stall)
          begin
             // Test for incomming sto or stoc
             if (inst_in == 4'h8 || inst_in == 4'h9)

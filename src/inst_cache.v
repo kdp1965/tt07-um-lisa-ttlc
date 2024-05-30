@@ -68,9 +68,12 @@ module inst_cache
    // CACHE line addresses and controls
    // ==========================================================================
    reg   [14:0]         cl_addr0;            // CACHE Line address 0 (Low RAM)
-   reg   [14:0]         cl_addr1;            // CACHE Line address 1
-   reg   [14:0]         cl_addr2;            // CACHE Line address 2
-   reg   [14:0]         cl_addr3;            // CACHE Line address 3 (The stack)
+   //reg   [14:0]         cl_addr1;            // CACHE Line address 1
+   //reg   [14:0]         cl_addr2;            // CACHE Line address 2
+   //reg   [14:0]         cl_addr3;            // CACHE Line address 3 (The stack)
+   wire  [14:0]         cl_addr1;            // CACHE Line address 1
+   wire  [14:0]         cl_addr2;            // CACHE Line address 2
+   wire  [14:0]         cl_addr3;            // CACHE Line address 3 (The stack)
    reg   [15:0]         cl_inst0;            // CACHE Line address 0 (Low RAM)
    reg   [15:0]         cl_inst1;            // CACHE Line address 1
    reg   [15:0]         cl_inst2;            // CACHE Line address 2
@@ -87,8 +90,8 @@ module inst_cache
    // Save/Load state machine signals
    // ==========================================================================
    reg                  cl_update;           // Goes TRUE to save new CACHE line address
-   reg                  load_addr3;
-   reg                  addr3_loaded;
+//   reg                  load_addr3;
+//   reg                  addr3_loaded;
    reg   [1:0]          state;
    reg   [1:0]          state_next;
 
@@ -105,6 +108,10 @@ module inst_cache
    assign cl_hit[3]    = cl_addr[3] && cl_valid;
    assign cache_hit    = |cl_hit;
    assign cache_valid  = cache_hit & core_i_fetch;
+
+   assign cl_addr1 = cl_addr0 + 1;
+   assign cl_addr2 = cl_addr0 + 2;
+   assign cl_addr3 = cl_addr0 + 3;
    
    // ==========================================================================
    // Assign RAM signals
@@ -141,14 +148,14 @@ module inst_cache
       begin
          cl_valid <= 1'b0;
          cl_addr0 <= 15'h0;
-         cl_addr1 <= 15'h0;
-         cl_addr2 <= 15'h0;
-         cl_addr3 <= 15'h0;
+         //cl_addr1 <= 15'h0;
+         //cl_addr2 <= 15'h0;
+         //cl_addr3 <= 15'h0;
          cl_inst0 <= 16'h0;
          cl_inst1 <= 16'h0;
          cl_inst2 <= 16'h0;
          cl_inst3 <= 16'h0;
-         addr3_loaded <= 1'b0;
+//         addr3_loaded <= 1'b0;
       end
       else
       begin
@@ -161,9 +168,10 @@ module inst_cache
          // Implement the cl_addr updates
          if (cl_update)
          begin
-            cl_addr0 <= cl_addr1;
-            cl_addr1 <= cl_addr2;
-            cl_addr2 <= cl_addr3;
+            cl_addr0 <= core_i_addr;
+//            cl_addr0 <= cl_addr1;
+//            cl_addr1 <= cl_addr2;
+//            cl_addr2 <= cl_addr3;
 
             cl_inst0 <= cl_inst1;
             cl_inst1 <= cl_inst2;
@@ -173,6 +181,7 @@ module inst_cache
 
          // We implement cl_addr3 a bit differently because it is also
          // a counter.
+`ifdef DONT_COMPILE
          if (load_addr3)
          begin
             cl_addr3 <= core_i_addr;
@@ -184,6 +193,7 @@ module inst_cache
                cl_addr3 <= cl_addr3 + 15'h1;
             addr3_loaded <= 1'b0;
          end
+`endif
       end
    end
 
@@ -201,7 +211,7 @@ module inst_cache
    always @*
    begin
       state_next       = state;
-      load_addr3       = 1'b0;
+//      load_addr3       = 1'b0;
       cl_update        = 1'b0;
       qspi_valid       = 1'b0;
       qspi_ready_ack   = 1'b1;
@@ -220,7 +230,7 @@ module inst_cache
                   cl_clear_valid = 1'b1;
 
                   // Update the CACHE line address
-                  load_addr3 = 1'b1;
+//                  load_addr3 = 1'b1;
                end
             end
 

@@ -352,8 +352,8 @@ module tt_um_lisa
    wire [2:0]           ttlc_out_data;
    wire [2:0]           ttlc_in_data;
    wire [1:0]           clk_div;             // Clock division factor control (00: /2, 01: /4, 10: /8, 11: /16)
-   wire [1:0]           input_depth;
-   wire [1:0]           output_depth;
+//   wire [1:0]           input_depth;
+//   wire [1:0]           output_depth;
    wire                 io_busy;
    reg                  io_busy_r;
    wire [7:0]           ttlc_to_lisa;
@@ -366,7 +366,6 @@ module tt_um_lisa
    wire   [11:0]        ttlc_i_addr;
    wire   [15:0]        ttlc_inst;
    wire                 ttlc_i_ready;
-   reg                  ttlc_i_ready_r;
    wire                 ttlc_i_fetch;
 
    // ==========================================================================
@@ -852,8 +851,8 @@ module tt_um_lisa
       .inst_cache_invalidate_ack ( inst_cache_invalidate_ack ),
       .ttlc_cache_invalidate     ( ttlc_cache_invalidate     ),
       .ttlc_cache_invalidate_ack ( ttlc_cache_invalidate_ack ),
-      .input_depth               ( input_depth               ),
-      .output_depth              ( output_depth              ),
+//      .input_depth               ( input_depth               ),
+//      .output_depth              ( output_depth              ),
       .clk_div                   ( clk_div                   ),
 
       // TTLC Debug signals
@@ -998,12 +997,10 @@ module tt_um_lisa
          mc14500_stack[1] <= 13'h0;
          mc14500_stack[2] <= 13'h0;
          mc14500_stack[3] <= 13'h0;
-         ttlc_i_ready_r   <= 1'b0;
          io_busy_r        <= 1'b0;
       end
       else
       begin
-         ttlc_i_ready_r   <= ttlc_i_ready;
          io_busy_r        <= io_busy;
 
          // Only update if we are running
@@ -1137,8 +1134,8 @@ module tt_um_lisa
       .output_buffer             ( output_pins               ), // Input to the module, drives the serial output
       .clk_div                   ( clk_div                   ), // Clock division factor control                              ( 00: /2, 01: /4, 10: /8, 11: /16 )
       .start                     ( ttlc_io_start             ), // Start the I/O transfer
-      .input_depth               ( input_depth               ),
-      .output_depth              ( output_depth              ),
+//      .input_depth               ( input_depth               ),
+//      .output_depth              ( output_depth              ),
       .io_busy                   ( io_busy                   ), // Indicates I/O transfer complete
       .data_out                  ( ttlc_out_data             ), // Serial data outputs
       .latch                     ( ttlc_io_latch             ), // Latch signal for external register control
