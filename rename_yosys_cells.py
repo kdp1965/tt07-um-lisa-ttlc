@@ -50,7 +50,7 @@ class RenameYosysCells(Step):
                continue
 
             # Ensure the instance name is default
-            if instName[0] == '_' or instName[-1] != '_'
+            if instName[0] == '_' or instName[-1] != '_':
                continue
 
             # Check for vector 
