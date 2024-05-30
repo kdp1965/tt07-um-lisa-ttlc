@@ -23,8 +23,7 @@ VERILOG_SOURCES += $(SRC)/shift_reg_io.v
 VERILOG_SOURCES += $(SRC)/lampFPU_div.sv $(SRC)/lampFPU_div_top.sv
 VERILOG_SOURCES += $(SRC)/lampFPU_utils.v $(SRC)/lampFPU_fractDiv.sv
 VERILOG_SOURCES += $(PWD)/psram.v $(PWD)/spiflash.v
-VERILOG_SOURCES += $(PDK_ROOT)/sky130A/libs.ref/sky130_fd_sc_hd/verilog/primitives.v
-VERILOG_SOURCES += $(PDK_ROOT)/sky130A/libs.ref/sky130_fd_sc_hd/verilog/sky130_fd_sc_hd.v
+VERILOG_SOURCES += $(PWD)/test_cells.v
 COMPILE_ARGS    += -I$(SRC)
 
 else
