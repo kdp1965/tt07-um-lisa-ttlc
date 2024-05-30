@@ -50,10 +50,10 @@ module ttlc_io
    reg  [31:0]   temp_storage;
 
    // A large vector that contains all read back values
-   wire [136:0] read_values;
+   wire [138:0] read_values;
 
    // Assign values to the large vector
-   assign read_values = {rr_value, port_in, temp_storage, input_pins, output_pins};
+   assign read_values = {1'b1, 1'b0, rr_value, port_in, temp_storage, input_pins, output_pins};
    assign port_out = temp_storage[7:0];
    assign ttlc_int = temp_storage[8];
 

@@ -75,12 +75,12 @@ module debug_regs
    output wire                custom_spi_cmd,
    output wire [7:0]          cmd_quad_write,
    output reg  [3:0]          plus_guard_time,
-   output reg  [3:0]          spi_clk_div,
-   output reg  [6:0]          spi_ce_delay,
-   output reg  [1:0]          spi_mode,
+   output wire [3:0]          spi_clk_div,
+   output wire [6:0]          spi_ce_delay,
+   output wire [1:0]          spi_mode,
 
    output wire [15:0]         output_mux_bits,
-   output reg  [7:0]          io_mux_bits,
+   output wire [7:0]          io_mux_bits,
 
    output reg                 cache_disabled,
    output reg  [1:0]          cache_map_sel,
@@ -93,9 +93,7 @@ module debug_regs
    output reg                 ttlc_cache_invalidate,
    input  wire                ttlc_cache_invalidate_ack,
 
-   output reg  [1:0]          clk_div,
-//   output reg  [1:0]          input_depth,
-//   output reg  [1:0]          output_depth,
+   output wire [1:0]          clk_div,
 
    input  wire [11:0]         ttlc_pc,
    output wire                ttlc_halt,
@@ -115,6 +113,8 @@ module debug_regs
    wire        dbg_addr_12;
    wire        dbg_addr_13;
    wire        dbg_addr_1b;
+   wire        dbg_addr_1c;
+   wire        dbg_addr_1e;
    wire        dbg_addr_1f;
    wire        dbg_addr_48;
    wire        dbg_addr_49;
@@ -125,12 +125,17 @@ module debug_regs
    (* keep = "true" *)
    wire        dbg_we_1b;
    (* keep = "true" *)
+   wire        dbg_we_1c;
+   (* keep = "true" *)
+   wire        dbg_we_1e;
+   (* keep = "true" *)
    wire        dbg_we_1f;
    (* keep = "true" *)
    wire        dbg_we_48;
    (* keep = "true" *)
    wire        dbg_we_49;
-
+   wire [9:0]  addr_1c_bits;
+   wire [12:0] addr_1e_bits;
 
    // We transfer a single 16-bit value on the debug interface
    assign debug_qspi_write = (dbg_a == 8'h20 || dbg_a == 8'h21) && dbg_we;
@@ -147,9 +152,17 @@ module debug_regs
    assign dbg_addr_12 = dbg_a == 8'h12;
    assign dbg_addr_13 = dbg_a == 8'h13;
    assign dbg_addr_1b = dbg_a == 8'h1b;
+   assign dbg_addr_1c = dbg_a == 8'h1c;
+   assign dbg_addr_1e = dbg_a == 8'h1e;
    assign dbg_addr_1f = dbg_a == 8'h1f;
    assign dbg_addr_48 = dbg_a == 8'h48;
    assign dbg_addr_49 = dbg_a == 8'h49;
+
+   assign io_mux_bits = addr_1c_bits[7:0];
+   assign clk_div     = addr_1c_bits[9:8];
+   assign spi_clk_div = addr_1e_bits[3:0];
+   assign spi_ce_delay= addr_1e_bits[10:4];
+   assign spi_mode    = addr_1e_bits[12:11];
 
    sky130_fd_sc_hd__and2_4 and_12(
       `ifdef USE_POWER_PINS
@@ -175,6 +188,22 @@ module debug_regs
             .VNB(VGND),
       `endif
          .A(dbg_addr_1b), .B(dbg_we), .X(dbg_we_1b) );
+   sky130_fd_sc_hd__and2_4 and_1c(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_1c), .B(dbg_we), .X(dbg_we_1c) );
+   sky130_fd_sc_hd__and2_4 and_1e(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_1e), .B(dbg_we), .X(dbg_we_1e) );
    sky130_fd_sc_hd__and2_4 and_1f(
       `ifdef USE_POWER_PINS
             .VPWR(VPWR),
@@ -209,12 +238,12 @@ module debug_regs
       begin : BASE_BITS
          sky130_fd_sc_hd__dlrtp_1   lisa1_base_latch
          (
-      `ifdef USE_POWER_PINS
+         `ifdef USE_POWER_PINS
             .VPWR(VPWR),
             .VGND(VGND),
             .VPB(VPWR),
             .VNB(VGND),
-      `endif
+         `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_12          ),
             .D          ( dbg_di[b]          ),
@@ -222,12 +251,12 @@ module debug_regs
          );
          sky130_fd_sc_hd__dlrtp_1   lisa2_base_latch
          (
-      `ifdef USE_POWER_PINS
+         `ifdef USE_POWER_PINS
             .VPWR(VPWR),
             .VGND(VGND),
             .VPB(VPWR),
             .VNB(VGND),
-      `endif
+         `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_13          ),
             .D          ( dbg_di[b]          ),
@@ -235,25 +264,41 @@ module debug_regs
          );
          sky130_fd_sc_hd__dlrtp_1   output_mux_latch
          (
-      `ifdef USE_POWER_PINS
+         `ifdef USE_POWER_PINS
             .VPWR(VPWR),
             .VGND(VGND),
             .VPB(VPWR),
             .VNB(VGND),
-      `endif
+         `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_1b          ),
             .D          ( dbg_di[b]          ),
             .Q          ( output_mux_bits[b] )
          );
+         if (b < 10)
+         begin : IO_GEN
+            sky130_fd_sc_hd__dlrtp_1   io_mux_latch
+            (
+            `ifdef USE_POWER_PINS
+               .VPWR(VPWR),
+               .VGND(VGND),
+               .VPB(VPWR),
+               .VNB(VGND),
+            `endif
+               .RESET_B    ( rst_n              ),
+               .GATE       ( dbg_we_1c          ),
+               .D          ( dbg_di[b]          ),
+               .Q          ( addr_1c_bits[b]    )
+            );
+         end
          sky130_fd_sc_hd__dlrtp_1   ttlc_base_latch
          (
-      `ifdef USE_POWER_PINS
+         `ifdef USE_POWER_PINS
             .VPWR(VPWR),
             .VGND(VGND),
             .VPB(VPWR),
             .VNB(VGND),
-      `endif
+         `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_1f          ),
             .D          ( dbg_di[b]          ),
@@ -262,14 +307,27 @@ module debug_regs
       end
       for (b = 0; b < 13; b = b + 1)
       begin : BREAK_BITS
-         sky130_fd_sc_hd__dlrtp_1   ttlc_brk0_latch
+         sky130_fd_sc_hd__dlrtp_1   addr_1e_latch
          (
-      `ifdef USE_POWER_PINS
+         `ifdef USE_POWER_PINS
             .VPWR(VPWR),
             .VGND(VGND),
             .VPB(VPWR),
             .VNB(VGND),
-      `endif
+         `endif
+            .RESET_B    ( rst_n              ),
+            .GATE       ( dbg_we_1e          ),
+            .D          ( dbg_di[b]          ),
+            .Q          ( addr_1e_bits[b]    )
+         );
+         sky130_fd_sc_hd__dlrtp_1   ttlc_brk0_latch
+         (
+         `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+         `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_48          ),
             .D          ( dbg_di[b]          ),
@@ -277,12 +335,12 @@ module debug_regs
          );
          sky130_fd_sc_hd__dlrtp_1   ttlc_brk1_latch
          (
-      `ifdef USE_POWER_PINS
+         `ifdef USE_POWER_PINS
             .VPWR(VPWR),
             .VGND(VGND),
             .VPB(VPWR),
             .VNB(VGND),
-      `endif
+         `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_49          ),
             .D          ( dbg_di[b]          ),
@@ -313,19 +371,17 @@ module debug_regs
          cmd_quad_write_r  <= 8'h38;
          plus_guard_time   <= 4'h1;
 //         output_mux_bits   <= 16'h0;
-         io_mux_bits       <= 8'h0;
+//         io_mux_bits       <= 8'h0;
          cache_disabled    <= 1'b0;
          cache_map_sel     <= 2'h3;
-         spi_clk_div       <= 4'h0;
-         spi_ce_delay      <= 7'h0;
-         spi_mode          <= 2'h0;
+//         spi_clk_div       <= 4'h0;
+//         spi_ce_delay      <= 7'h0;
+//         spi_mode          <= 2'h0;
          data_cache_flush  <= 1'b0;
-         data_cache_invalidate <=1'b0;
+         data_cache_invalidate <= 1'b0;
          inst_cache_invalidate <= 1'b0;
          ttlc_cache_invalidate <= 1'b0;
-//         input_depth       <= 2'h0;
-//         output_depth      <= 2'h0;
-         clk_div           <= 2'h0;
+//         clk_div           <= 2'h0;
 //         ttlc_brk_addr0    <= 12'hfff;
 //         ttlc_brk_addr1    <= 12'hfff;
          ttlc_run          <= 1'b0;
@@ -348,12 +404,11 @@ module debug_regs
                4'h9: cmd_quad_write_r <= dbg_di[7:0];
                4'ha: plus_guard_time <= dbg_di[3:0];
 //               4'hb: output_mux_bits <= dbg_di;
-              // 4'hc: {output_depth, input_depth, clk_div, io_mux_bits} <= dbg_di[13:0];
-               4'hc: {clk_div, io_mux_bits} <= dbg_di[9:0];
+//               4'hc: {clk_div, io_mux_bits} <= dbg_di[9:0];
                4'hd: {ttlc_cache_invalidate, inst_cache_invalidate, data_cache_invalidate, data_cache_flush,
                         cache_disabled, cache_map_sel} <= dbg_di[6:0];
    
-               4'he: {spi_mode, spi_ce_delay, spi_clk_div} <= dbg_di[12:0];
+//               4'he: {spi_mode, spi_ce_delay, spi_clk_div} <= dbg_di[12:0];
 //               4'hf: ttlc_base_addr <= dbg_di;
                default: begin end
             endcase
@@ -417,7 +472,6 @@ module debug_regs
          4'h9: dbg_do = {8'h0, cmd_quad_write_r};
          4'ha: dbg_do = {12'h0, plus_guard_time};
          4'hb: dbg_do = output_mux_bits;
-         //4'hc: dbg_do = {2'h0, output_depth, input_depth, clk_div, io_mux_bits};
          4'hc: dbg_do = {6'h0, clk_div, io_mux_bits};
          4'hd: dbg_do = {9'h0, ttlc_cache_invalidate, inst_cache_invalidate, data_cache_invalidate,
                          data_cache_flush, cache_disabled, cache_map_sel};
