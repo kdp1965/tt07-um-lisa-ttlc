@@ -61,6 +61,10 @@ module lisa_dbg
       parameter DBG_BRKPOINTS  = 6
 )
 (
+`ifdef USE_POWER_PINS
+    input                  VPWR,
+    input                  VGND,
+`endif
    input                      clk,
    input                      rst_n,
 
@@ -267,12 +271,54 @@ module lisa_dbg
    assign dbg_addr_0c = dbg_a == 8'h0c;
    assign dbg_addr_0d = dbg_a == 8'h0d;
 
-   sky130_fd_sc_hd__and2_4 and_08( .A(dbg_addr_08), .B(dbg_we), .X(dbg_we_08) );
-   sky130_fd_sc_hd__and2_4 and_09( .A(dbg_addr_09), .B(dbg_we), .X(dbg_we_09) );
-   sky130_fd_sc_hd__and2_4 and_0a( .A(dbg_addr_0a), .B(dbg_we), .X(dbg_we_0a) );
-   sky130_fd_sc_hd__and2_4 and_0b( .A(dbg_addr_0b), .B(dbg_we), .X(dbg_we_0b) );
-   sky130_fd_sc_hd__and2_4 and_0c( .A(dbg_addr_0c), .B(dbg_we), .X(dbg_we_0c) );
-   sky130_fd_sc_hd__and2_4 and_0d( .A(dbg_addr_0d), .B(dbg_we), .X(dbg_we_0d) );
+   sky130_fd_sc_hd__and2_4 and_08(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_08), .B(dbg_we), .X(dbg_we_08) );
+   sky130_fd_sc_hd__and2_4 and_09(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_09), .B(dbg_we), .X(dbg_we_09) );
+   sky130_fd_sc_hd__and2_4 and_0a(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_0a), .B(dbg_we), .X(dbg_we_0a) );
+   sky130_fd_sc_hd__and2_4 and_0b(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_0b), .B(dbg_we), .X(dbg_we_0b) );
+   sky130_fd_sc_hd__and2_4 and_0c(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_0c), .B(dbg_we), .X(dbg_we_0c) );
+   sky130_fd_sc_hd__and2_4 and_0d(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_0d), .B(dbg_we), .X(dbg_we_0d) );
 
    generate
    genvar b;
@@ -280,6 +326,12 @@ module lisa_dbg
       begin : LISA_BRK_BITS
          sky130_fd_sc_hd__dlrtp_1   brk_r0_latch
          (
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_08          ),
             .D          ( dbg_di[b]          ),
@@ -287,6 +339,12 @@ module lisa_dbg
          );
          sky130_fd_sc_hd__dlrtp_1   brk_r1_latch
          (
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_09          ),
             .D          ( dbg_di[b]          ),
@@ -294,6 +352,12 @@ module lisa_dbg
          );
          sky130_fd_sc_hd__dlrtp_1   brk_r2_latch
          (
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_0a          ),
             .D          ( dbg_di[b]          ),
@@ -301,6 +365,12 @@ module lisa_dbg
          );
          sky130_fd_sc_hd__dlrtp_1   brk_r3_latch
          (
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_0b          ),
             .D          ( dbg_di[b]          ),
@@ -308,6 +378,12 @@ module lisa_dbg
          );
          sky130_fd_sc_hd__dlrtp_1   brk_r4_latch
          (
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_0c          ),
             .D          ( dbg_di[b]          ),
@@ -315,6 +391,12 @@ module lisa_dbg
          );
          sky130_fd_sc_hd__dlrtp_1   brk_r5_latch
          (
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_0d          ),
             .D          ( dbg_di[b]          ),

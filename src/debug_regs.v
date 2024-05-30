@@ -33,6 +33,10 @@ module debug_regs
    parameter CHIP_SELECTS = 2
  )
 (
+`ifdef USE_POWER_PINS
+    input                  VPWR,
+    input                  VGND,
+`endif
    // Timing and reset inputs
    input  wire                clk,              // System clock 
    input  wire                rst_n,            // Active low reset
@@ -147,12 +151,54 @@ module debug_regs
    assign dbg_addr_48 = dbg_a == 8'h48;
    assign dbg_addr_49 = dbg_a == 8'h49;
 
-   sky130_fd_sc_hd__and2_4 and_12( .A(dbg_addr_12), .B(dbg_we), .X(dbg_we_12) );
-   sky130_fd_sc_hd__and2_4 and_13( .A(dbg_addr_13), .B(dbg_we), .X(dbg_we_13) );
-   sky130_fd_sc_hd__and2_4 and_1b( .A(dbg_addr_1b), .B(dbg_we), .X(dbg_we_1b) );
-   sky130_fd_sc_hd__and2_4 and_1f( .A(dbg_addr_1f), .B(dbg_we), .X(dbg_we_1f) );
-   sky130_fd_sc_hd__and2_4 and_48( .A(dbg_addr_48), .B(dbg_we), .X(dbg_we_48) );
-   sky130_fd_sc_hd__and2_4 and_49( .A(dbg_addr_49), .B(dbg_we), .X(dbg_we_49) );
+   sky130_fd_sc_hd__and2_4 and_12(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_12), .B(dbg_we), .X(dbg_we_12) );
+   sky130_fd_sc_hd__and2_4 and_13(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_13), .B(dbg_we), .X(dbg_we_13) );
+   sky130_fd_sc_hd__and2_4 and_1b(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_1b), .B(dbg_we), .X(dbg_we_1b) );
+   sky130_fd_sc_hd__and2_4 and_1f(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_1f), .B(dbg_we), .X(dbg_we_1f) );
+   sky130_fd_sc_hd__and2_4 and_48(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_48), .B(dbg_we), .X(dbg_we_48) );
+   sky130_fd_sc_hd__and2_4 and_49(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_49), .B(dbg_we), .X(dbg_we_49) );
 
    // ===================================================================
    // We are generating latches for most of the static flops
@@ -163,6 +209,12 @@ module debug_regs
       begin : BASE_BITS
          sky130_fd_sc_hd__dlrtp_1   lisa1_base_latch
          (
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_12          ),
             .D          ( dbg_di[b]          ),
@@ -170,6 +222,12 @@ module debug_regs
          );
          sky130_fd_sc_hd__dlrtp_1   lisa2_base_latch
          (
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_13          ),
             .D          ( dbg_di[b]          ),
@@ -177,6 +235,12 @@ module debug_regs
          );
          sky130_fd_sc_hd__dlrtp_1   output_mux_latch
          (
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_1b          ),
             .D          ( dbg_di[b]          ),
@@ -184,6 +248,12 @@ module debug_regs
          );
          sky130_fd_sc_hd__dlrtp_1   ttlc_base_latch
          (
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_1f          ),
             .D          ( dbg_di[b]          ),
@@ -194,6 +264,12 @@ module debug_regs
       begin : BREAK_BITS
          sky130_fd_sc_hd__dlrtp_1   ttlc_brk0_latch
          (
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_48          ),
             .D          ( dbg_di[b]          ),
@@ -201,6 +277,12 @@ module debug_regs
          );
          sky130_fd_sc_hd__dlrtp_1   ttlc_brk1_latch
          (
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
             .RESET_B    ( rst_n              ),
             .GATE       ( dbg_we_49          ),
             .D          ( dbg_di[b]          ),

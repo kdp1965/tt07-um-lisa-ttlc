@@ -404,6 +404,10 @@ module tt_um_lisa
    // ==========================================================================
    lisa_core i_lisa_core
    (
+`ifdef USE_POWER_PINS
+      .VPWR(VPWR),
+      .VGND(VGND),
+`endif
       .clk                       ( clk                       ),
       .rst_n                     ( rst_n_r[2]                ),
       .rst_async_n               ( rst_async_n_r[2]          ),
@@ -790,6 +794,10 @@ module tt_um_lisa
    // ==========================================================================
    debug_regs i_debug_regs
    (
+`ifdef USE_POWER_PINS
+      .VPWR(VPWR),
+      .VGND(VGND),
+`endif
       // Timing and reset inputs
       .clk                       ( clk                       ), // System clock
       .rst_n                     ( rst_n_r[2]                ), // Active low reset

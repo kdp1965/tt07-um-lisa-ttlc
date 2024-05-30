@@ -161,9 +161,13 @@ module lisa_core
       parameter PC_BITS        = 15,
       parameter D_BITS         = 15,       // NOTE: Up to PC_BITS
       parameter WANT_DBG       = 1,
-      parameter DBG_BRKPOINTS  = 5
+      parameter DBG_BRKPOINTS  = 6
 )
 (
+`ifdef USE_POWER_PINS
+    input                  VPWR,
+    input                  VGND,
+`endif
    input                      clk,
    input                      rst_n,
    input                      rst_async_n,
@@ -1826,6 +1830,10 @@ module lisa_core
        )
       i_lisa_dbg
       (
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+      `endif
          .clk        ( clk         ),
          .rst_n      ( rst_n       ),
                                    
