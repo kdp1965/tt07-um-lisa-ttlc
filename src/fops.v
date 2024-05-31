@@ -6,60 +6,151 @@
 //basically a close copy of https://github.com/ReaLLMASIC/nanoGPT/blob/master/HW/SA/verilog/fadd.sv
 module fadd
 (
-    input [16-1:0] a_in, b_in, // Inputs in the format of IEEE-`EXP_W-154 Representation.
-    output [16-1:0] result // Outputs in the format of IEEE-`EXP_W-154 Representation.
+    input  wire [16-1:0] a_in, b_in, // Inputs in the format of IEEE-`EXP_W-154 Representation.
+    input  wire          round_to_zero,
+    output wire [16-1:0] result // Outputs in the format of IEEE-`EXP_W-154 Representation.
 );
 
-   wire Exception;
+   wire isINF;
+   wire isNAN;
    wire output_sign;
-   wire operation_sub_addBar;
+   wire operation_sub;
 
-   wire [16-1:0] operand_a, operand_b;
-   wire [`M_W:0] significand_a, significand_b;
+   wire [16-1:0]     operand_a, operand_b;
+   wire [2+`M_W+1:0] significand_a, significand_b;
    wire [`EXP_W-1:0] exponent_diff;
 
-   wire [`M_W:0] significand_b_add;
+   wire [2+`M_W+1:0] significand_b_add;
+   wire [2+`M_W+1:0] significand_b_add_twos;
 
-   wire [`M_W+1:0] significand_add;
-   wire [16-2:0] add_sum;
+   wire [2+`M_W+1:0] significand_add;
+   wire [2+`M_W+1:0] significand_add_temp;
+   reg  [3:0]        leftShift;
+   wire              a_isZ, b_isZ;
+   wire              a_isINF, b_isINF;
+   wire              a_isSNAN, b_isSNAN;
+   wire              a_isQNAN, b_isQNAN;
+   wire              a_isDenorm, b_isDenorm;
+   wire              a_assumedOne, b_assumedOne;
+   wire [`EXP_W:0]   a_e;
+   reg  [`EXP_W:0]   e_res;
+   reg  [2+`M_W+1:0] f_res;
+   /* verilator lint_off UNUSEDSIGNAL */
+   reg  [2+`M_W+1:0] f_rounded;
+   /* verilator lint_on UNUSEDSIGNAL */
+   wire              a_GT_b;
 
+   assign a_GT_b = (a_in[16-2:0] > b_in[16-2:0]);
 
    //for operations always operand_a must not be less than b_in
-   assign {operand_a,operand_b} = (a_in[16-2:0] < b_in[16-2:0]) ? {b_in,a_in} : {a_in,b_in};
+   assign {operand_a,operand_b} = a_GT_b ? {a_in,b_in} : {b_in,a_in};
+
+   assign a_isDenorm = ~(|operand_a[14 -: 8]) & (|operand_a[6:0]);   // E==0x0   && f!=0x0
+   assign a_isZ      = ~(|operand_a[14:0]);
+   assign a_isINF    = operand_a[14:0] == 15'b111111110000000;
+   assign a_isSNAN   = operand_a[14:0] == 15'b111111110111111;
+   assign a_isQNAN   = operand_a[14:0] == 15'b111111111000000;
+   assign b_isDenorm = ~(|operand_b[14 -: 8]) & (|operand_b[6:0]);   // E==0x0   && f!=0x0
+   assign b_isZ      = ~(|operand_b[14:0]);
+   assign b_isINF    = operand_b[14:0] == 15'b111111110000000;
+   assign b_isSNAN   = operand_b[14:0] == 15'b111111110111111;
+   assign b_isQNAN   = operand_b[14:0] == 15'b111111111000000;
+   assign a_assumedOne = ~a_isZ & ~a_isDenorm;
+   assign b_assumedOne = ~b_isZ & ~b_isDenorm;
+   assign a_e        = {1'b0, operand_a[14 -: 7], operand_a[7] | a_isDenorm};
 
    //Exception flag sets 1 if either one of the exponent is 255.
-   assign Exception = (&operand_a[16-2:`M_W]) | (&operand_b[16-2:`M_W]);
+   assign isINF = a_isINF | b_isINF;
+   assign isNAN = a_isSNAN | b_isSNAN | a_isQNAN | b_isQNAN;
 
-   assign output_sign = operand_a[16-1] ; // since the operand_a is always greater than operand_b, the sign of the result will be same as operand_a.
-
-   //operation_sub_addBar is 1 if we are doing subtraction else 0.
-   assign operation_sub_addBar =  ~(operand_a[16-1] ^ operand_b[16-1]);
+   assign operation_sub =  operand_a[16-1] != operand_b[16-1];
 
    //Assigining significand values according to Hidden Bit.
-   assign significand_a = {1'b1,operand_a[`M_W-1:0]}; // expand the mantissa by 1 bit before multiplication since its always implied
-   assign significand_b = {1'b1,operand_b[`M_W-1:0]}; // same as above
+   assign significand_a = {1'b0,a_assumedOne,operand_a[`M_W-1:0], 2'b0}; // expand the mantissa by 1 bit before addition since its always implied
+   assign significand_b = {1'b0,b_assumedOne,operand_b[`M_W-1:0], 2'b0}; // same as above
 
    //Evaluating Exponent Difference
    assign exponent_diff = operand_a[16-2:`M_W] - operand_b[16-2:`M_W];
 
    //Shifting significand_b to the right according to exponent_diff. Exapmle: if we have 1.0101 >> 2 = 0.0101 then exponent_diff = 2 and significand_b_add = significand_b >> exponent_diff
    assign significand_b_add = significand_b >> exponent_diff;
+   assign significand_b_add_twos = operation_sub ? ~significand_b_add + 1 : significand_b_add;
 
    //------------------------------------------------ADD BLOCK------------------------------------------//
-   //if we are adding(operation_sub_addBar=1) need to add significand_b_add to significand_a. 
-   //Or sets the significand to zero if the signs are different(this means we are doing subtraction), effectively determining the core operation of the floating-point addition based on the sign of the operands.
-   assign significand_add = ( operation_sub_addBar) ? (significand_a + significand_b_add) : (significand_a - significand_b_add);  //{(`M_W+2){1'b0}}; 
+   assign significand_add_temp = significand_a + significand_b_add_twos;
+   assign significand_add = operation_sub ? {1'b0, significand_add_temp[2+`M_W:0]} : significand_add_temp;
 
-   //Taking care of the resulting mantissa. 
-   //If there is a carry, then the result is normalized by shifting the significand right by one bit(because its implied) and incrementing the exponent by one.
-   //If there is no carry, we just use the result of the addition, and we have `M_W-1:0 due to the fact that we are using the hidden bit(implied 1).
-   assign add_sum[`M_W-1:0] = significand_add[`M_W+1] ? significand_add[`M_W:1] : significand_add[`M_W-1:0];
+   always @*
+   begin
+		casez(significand_add[2 +: 9])
+			9'b1????????: leftShift = 'd0;
+			9'b01???????: leftShift = 'd0;
+			9'b001??????: leftShift = 'd1;
+			9'b0001?????: leftShift = 'd2;
+			9'b00001????: leftShift = 'd3;
+			9'b000001???: leftShift = 'd4;
+			9'b0000001??: leftShift = 'd5;
+			9'b00000001?: leftShift = 'd6;
+			9'b000000001: leftShift = 'd7;
+			9'b000000000: leftShift = 'd8;
+         default:      leftShift = 'd0;
+		endcase
+   end
 
-   // Taking care of the resulting exponent.
-   //If carry generates in sum value then exponent must be added with 1 else feed as it is.
-   assign add_sum[16-2:`M_W] = significand_add[`M_W+1] ? (1'b1 + operand_a[16-2:`M_W]) : operand_a[16-2:`M_W];
+   always @*
+   begin
+      //Taking care of the resulting mantissa. 
+      //If there is a carry, then the result is normalized by shifting the significand right by one bit(because its implied) and incrementing the exponent by one.
+      if (significand_add[1+`M_W+2])
+      begin
+         // Check for overflow
+         if (a_e + 1 == 255)
+         begin
+            // Overflow ocurred
+            e_res = 9'hFF;
+            f_res = 'h0;
+         end
+         else
+         begin
+            // Add one to exponent and shift significand right one
+            e_res = a_e + 1;
+            f_res = {3'b0, significand_add[1+`M_W+1:1+1]};
+         end
+      end
 
-   assign result = Exception ? {(16){1'b0}} : {output_sign,add_sum};
+      // Check if no shift needed ... already normalized
+      else if (significand_add[2+`M_W] == 1)
+      begin
+         e_res = a_e;
+         f_res = {2'b0, significand_add[2+`M_W-1:2+0], |significand_add[1:0], 1'b0};
+      end
+      else
+      begin
+         // Check for zero
+         if (significand_add == '0)
+         begin
+            e_res = '0;
+            f_res = '0;
+         end
+
+         // Do post-normalization
+         else if (a_e > 9'(leftShift))
+         begin
+            e_res = a_e - 9'(leftShift);
+            f_res = significand_add << leftShift;
+         end
+         else
+         begin
+            e_res = 'h0;
+            f_res = significand_add << (a_e - 1);
+         end
+      end
+   end
+
+   assign output_sign = {e_res,f_res} == '0 ? 1'b0 : operand_a[15];// (a_GT_b ? a_in[15] : ~b_in[15]);
+
+   assign f_rounded = (round_to_zero & output_sign) ? f_res : f_res + 2;
+   assign result = isINF ? 16'h7F80 : isNAN ? 16'h7fC0 : {output_sign,e_res[7:0],f_rounded[2+6:2+0]};
 
 endmodule
 

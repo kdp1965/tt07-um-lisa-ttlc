@@ -2073,9 +2073,10 @@ module lisa_core
    assign fadd_op2 = fx[inst[1:0]] & {16{op_fadd_r}};
    fadd i_fadd
    (
-      .a_in    ( facc          ),
-      .b_in    ( fadd_op2      ),
-      .result  ( fadd_result   )
+      .a_in          ( facc          ),
+      .b_in          ( fadd_op2      ),
+      .round_to_zero ( amode[2]      ),
+      .result        ( fadd_result   )
    );
 
    assign fmul_op2 = fx[inst[1:0]] & {16{op_fmul_r}};
