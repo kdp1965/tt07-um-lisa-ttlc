@@ -30,9 +30,10 @@ module fadd
    wire              a_isINF, b_isINF;
    wire              a_isSNAN, b_isSNAN;
    wire              a_isQNAN, b_isQNAN;
-   wire              a_isDenorm, b_isDenorm;
+   wire              a_isSubnorm, b_isSubnorm;
    wire              a_assumedOne, b_assumedOne;
    wire [`EXP_W:0]   a_e;
+   wire [`EXP_W:0]   b_e;
    reg  [`EXP_W:0]   e_res;
    reg  [2+`M_W+1:0] f_res;
    /* verilator lint_off UNUSEDSIGNAL */
@@ -45,19 +46,20 @@ module fadd
    //for operations always operand_a must not be less than b_in
    assign {operand_a,operand_b} = a_GT_b ? {a_in,b_in} : {b_in,a_in};
 
-   assign a_isDenorm = ~(|operand_a[14 -: 8]) & (|operand_a[6:0]);   // E==0x0   && f!=0x0
-   assign a_isZ      = ~(|operand_a[14:0]);
-   assign a_isINF    = operand_a[14:0] == 15'b111111110000000;
-   assign a_isSNAN   = operand_a[14:0] == 15'b111111110111111;
-   assign a_isQNAN   = operand_a[14:0] == 15'b111111111000000;
-   assign b_isDenorm = ~(|operand_b[14 -: 8]) & (|operand_b[6:0]);   // E==0x0   && f!=0x0
-   assign b_isZ      = ~(|operand_b[14:0]);
-   assign b_isINF    = operand_b[14:0] == 15'b111111110000000;
-   assign b_isSNAN   = operand_b[14:0] == 15'b111111110111111;
-   assign b_isQNAN   = operand_b[14:0] == 15'b111111111000000;
-   assign a_assumedOne = ~a_isZ & ~a_isDenorm;
-   assign b_assumedOne = ~b_isZ & ~b_isDenorm;
-   assign a_e        = {1'b0, operand_a[14 -: 7], operand_a[7] | a_isDenorm};
+   assign a_isSubnorm  = ~(|operand_a[14 -: 8]) & (|operand_a[6:0]);   // E==0x0   && f!=0x0
+   assign a_isZ        = ~(|operand_a[14:0]);
+   assign a_isINF      = operand_a[14:0] == 15'b111111110000000;
+   assign a_isSNAN     = operand_a[14:0] == 15'b111111110111111;
+   assign a_isQNAN     = operand_a[14:0] == 15'b111111111000000;
+   assign b_isSubnorm  = ~(|operand_b[14 -: 8]) & (|operand_b[6:0]);   // E==0x0   && f!=0x0
+   assign b_isZ        = ~(|operand_b[14:0]);
+   assign b_isINF      = operand_b[14:0] == 15'b111111110000000;
+   assign b_isSNAN     = operand_b[14:0] == 15'b111111110111111;
+   assign b_isQNAN     = operand_b[14:0] == 15'b111111111000000;
+   assign a_assumedOne = ~a_isZ & ~a_isSubnorm;
+   assign b_assumedOne = ~b_isZ & ~b_isSubnorm;
+   assign a_e          = {1'b0, operand_a[14:`M_W+1], (operand_a[`M_W] | a_isSubnorm)};
+   assign b_e          = {1'b0, operand_b[14:`M_W+1], (operand_b[`M_W] | b_isSubnorm)};
 
    //Exception flag sets 1 if either one of the exponent is 255.
    assign isINF = a_isINF | b_isINF;
@@ -70,7 +72,8 @@ module fadd
    assign significand_b = {1'b0,b_assumedOne,operand_b[`M_W-1:0], 2'b0}; // same as above
 
    //Evaluating Exponent Difference
-   assign exponent_diff = operand_a[16-2:`M_W] - operand_b[16-2:`M_W];
+   //assign exponent_diff = operand_a[16-2:`M_W] - operand_b[16-2:`M_W];
+   assign exponent_diff = a_e - b_e;
 
    //Shifting significand_b to the right according to exponent_diff. Exapmle: if we have 1.0101 >> 2 = 0.0101 then exponent_diff = 2 and significand_b_add = significand_b >> exponent_diff
    assign significand_b_add = significand_b >> exponent_diff;
@@ -174,15 +177,39 @@ module fmul
     /* verilator lint_on UNUSEDSIGNAL */
     reg overflow;
     reg zero_check;
+   wire              a_isZ, b_isZ;
+   wire              a_isINF, b_isINF;
+   wire              a_isSNAN, b_isSNAN;
+   wire              a_isQNAN, b_isQNAN;
+   wire              a_isSubnorm, b_isSubnorm;
+   wire              a_assumedOne, b_assumedOne;
+   wire [`EXP_W:0]   a_e;
+   wire [`EXP_W:0]   b_e;
+   int               e_add;
+
+   assign a_isSubnorm  = ~(|a_in[14 -: 8]) & (|a_in[6:0]);   // E==0x0   && f!=0x0
+   assign a_isZ        = ~(|a_in[14:0]);
+   assign a_isINF      = a_in[14:0] == 15'b111111110000000;
+   assign a_isSNAN     = a_in[14:0] == 15'b111111110111111;
+   assign a_isQNAN     = a_in[14:0] == 15'b111111111000000;
+   assign b_isSubnorm  = ~(|b_in[14 -: 8]) & (|b_in[6:0]);   // E==0x0   && f!=0x0
+   assign b_isZ        = ~(|b_in[14:0]);
+   assign b_isINF      = b_in[14:0] == 15'b111111110000000;
+   assign b_isSNAN     = b_in[14:0] == 15'b111111110111111;
+   assign b_isQNAN     = b_in[14:0] == 15'b111111111000000;
+   assign a_e          = {1'b0, a_in[14:`M_W+1], (a_in[`M_W] | a_isSubnorm)};
+   assign b_e          = {1'b0, b_in[14:`M_W+1], (b_in[`M_W] | b_isSubnorm)};
+   assign a_assumedOne = ~a_isZ & ~a_isSubnorm;
+   assign b_assumedOne = ~b_isZ & ~b_isSubnorm;
     
     // Multiplication logic
     always @* begin
-        mul_fix_out = {1'b1, a_in[`M_W-1:0]} * {1'b1, b_in[`M_W-1:0]}; //extend the mantissa by 1 bit before multiplication
+        mul_fix_out = {a_assumedOne, a_in[`M_W-1:0]} * {b_assumedOne, b_in[`M_W-1:0]}; //extend the mantissa by 1 bit before multiplication
     end
 
     // Zero check
     always @* begin
-        if (a_in[16-2:`M_W] == 0 || b_in[16-2:`M_W] == 0) begin
+        if (a_in[16-2:0] == 0 || b_in[16-2:0] == 0) begin
             zero_check = 1'b1;
         end else begin
             zero_check = 1'b0;
@@ -192,13 +219,15 @@ module fmul
     // Generate Mantissa. We are only considering the most significat bits of the product to generate the mantissa.
     always @* begin
         //select two MSBs of the product
-        case(mul_fix_out[`MULT_W-1:`MULT_W-2])
-           //Example: If mul_fix_out is 8 bits wide and represents 01xxxxxx (binary), it extracts xxxxxx, assuming the MSBs are 01
-            2'b01: M_result = mul_fix_out[`MULT_W-3:`M_W]; //MSB is dropped(as it is always 1)
-            //In 2'b10 or 2'b11 case: 10yyyyyy → Shift → 0yyyyyy (Extract yyyyyy)
-            2'b10: M_result = mul_fix_out[`MULT_W-2:`M_W+1]; // Between two and just under 4. product larger than normalized range, so we need to shift right 
-            2'b11: M_result = mul_fix_out[`MULT_W-2:`M_W+1]; // same as line above. 
-            default: M_result = mul_fix_out[`MULT_W-2:`M_W+1]; // default same as two lines above
+        casez(mul_fix_out[`MULT_W-1:`MULT_W-6])
+            //Example: If mul_fix_out is 8 bits wide and represents 01xxxxxx (binary), it extracts xxxxxx, assuming the MSBs are 01
+            6'b000001: begin M_result = mul_fix_out[`MULT_W-7:`M_W-4]; e_add = -4; end
+            6'b00001?: begin M_result = mul_fix_out[`MULT_W-6:`M_W-3]; e_add = -3; end
+            6'b0001??: begin M_result = mul_fix_out[`MULT_W-5:`M_W-2]; e_add = -2; end
+            6'b001???: begin M_result = mul_fix_out[`MULT_W-4:`M_W-1]; e_add = -1; end
+            6'b01????: begin M_result = mul_fix_out[`MULT_W-3:`M_W];   e_add = 0; end
+            6'b1?????: begin M_result = mul_fix_out[`MULT_W-2:`M_W+1]; e_add = 1; end
+            default:   begin M_result = mul_fix_out[`MULT_W-2:`M_W+1]; e_add = 1; end
         endcase
     end
 
@@ -208,7 +237,7 @@ module fmul
         //1. If either of the inputs is zero, then the result is zero and there is no overflow.
         //2. Underflow check: If the sum of the exponents is less than the minimum exponent, then the result is zero and there is no overflow. {2'b0,{(EXP_W-1){1'b1}}} is the minimum exponent(001111111 in case of 32bit float)
         //3. Overflow check: If the sum of the exponents is greater than the maximum exponent, then the result is infinity and there is overflow. EXP_MAX is the maximum exponent.
-        overflow = (zero_check || ({1'b0, a_in[16-2:`M_W]} + {1'b0, b_in[16-2:`M_W]} + {{`EXP_W{1'b0}}, mul_fix_out[`MULT_W-1]}) < {2'b0,{(`EXP_W-1){1'b1}}} || ({1'b0, a_in[16-2:`M_W]} + {1'b0, b_in[16-2:`M_W]} + {8'd0, mul_fix_out[`MULT_W-1]}) > `EXP_MAX);
+        overflow = (zero_check || (a_e + b_e + {{`EXP_W{1'b0}}, mul_fix_out[`MULT_W-1]}) < {2'b0,{(`EXP_W-1){1'b1}}} || (a_e + b_e + {8'd0, mul_fix_out[`MULT_W-1]}) > `EXP_MAX);
 
         if (~zero_check) begin
             if (overflow) begin
@@ -217,7 +246,7 @@ module fmul
                 //1. We extend the exponent by 1 bit because the result of addition of two exponents can be 1 bit larger than the exponent itself.
                 //2. We add the MSB of the mantissa multiplication(before normalization) to the exponent sum to account for the shifting of the mantissa.
                 //3. We subtract the bias from the exponent sum to get the final exponent because just adding two exponents would give us exp1 + exp2 + 2 x bias.
-                e_result0 = ({1'b0, a_in[16-2:`M_W]} + {1'b0, b_in[16-2:`M_W]} + {{`EXP_W{1'b0}}, mul_fix_out[`MULT_W-1]}) - {2'b0,{(`EXP_W-1){1'b1}}};
+                e_result0 = a_e + b_e + (`EXP_W+1)'(e_add) - {2'b0,{(`EXP_W-1){1'b1}}};
             end
         end else begin
             e_result0 = 0;
@@ -231,7 +260,9 @@ module fmul
     wire [`M_W-1:0] overflow_mask;
     assign overflow_mask = overflow ? 0 : {(`M_W){1'b1}};
 
-    assign result = {sign, e_result, overflow_mask & M_result};
+    assign result = (a_isSNAN | b_isSNAN | a_isQNAN | b_isQNAN) ? 16'h7FC0 :
+                    (a_isINF  | b_isINF)                        ? 16'h7F80 :
+                           {sign, e_result, overflow_mask & M_result};
 endmodule
 
 
