@@ -52,7 +52,7 @@ Debug module:
 
 ==========================================================================================
 */
-`define SIX_BREAK
+//`define SIX_BREAK
 
 module lisa_dbg
 #(
@@ -114,8 +114,8 @@ module lisa_dbg
    wire [PC_BITS:0]  brk_r1;
    wire [PC_BITS:0]  brk_r2;
    wire [PC_BITS:0]  brk_r3;
-`ifdef SIX_BREAK
    wire [PC_BITS:0]  brk_r4;
+`ifdef SIX_BREAK
    wire [PC_BITS:0]  brk_r5;
 `endif
    reg               brk_halt;
@@ -133,7 +133,9 @@ module lisa_dbg
    wire              dbg_addr_0a;
    wire              dbg_addr_0b;
    wire              dbg_addr_0c;
+`ifdef SIX_BREAK
    wire              dbg_addr_0d;
+`endif
    (* keep = "true" *)
    wire              dbg_we_08;
    (* keep = "true" *)
@@ -144,8 +146,10 @@ module lisa_dbg
    wire              dbg_we_0b;
    (* keep = "true" *)
    wire              dbg_we_0c;
+`ifdef SIX_BREAK
    (* keep = "true" *)
    wire              dbg_we_0d;
+`endif
 
    assign d_o      = dbg_di[7:0];
    assign d_access = (dbg_we | dbg_rd) && dbg_a == 8'h6 && halted;
@@ -269,7 +273,9 @@ module lisa_dbg
    assign dbg_addr_0a = dbg_a == 8'h0a;
    assign dbg_addr_0b = dbg_a == 8'h0b;
    assign dbg_addr_0c = dbg_a == 8'h0c;
+`ifdef SIX_BREAK
    assign dbg_addr_0d = dbg_a == 8'h0d;
+`endif
 
    sky130_fd_sc_hd__and2_4 and_08(
       `ifdef USE_POWER_PINS
@@ -311,6 +317,7 @@ module lisa_dbg
             .VNB(VGND),
       `endif
          .A(dbg_addr_0c), .B(dbg_we), .X(dbg_we_0c) );
+`ifdef SIX_BREAK
    sky130_fd_sc_hd__and2_4 and_0d(
       `ifdef USE_POWER_PINS
             .VPWR(VPWR),
@@ -319,6 +326,7 @@ module lisa_dbg
             .VNB(VGND),
       `endif
          .A(dbg_addr_0d), .B(dbg_we), .X(dbg_we_0d) );
+`endif
 
    generate
    genvar b;
@@ -389,6 +397,7 @@ module lisa_dbg
             .D          ( dbg_di[b]          ),
             .Q          ( brk_r4[b]          )
          );
+`ifdef SIX_BREAK
          sky130_fd_sc_hd__dlrtp_1   brk_r5_latch
          (
       `ifdef USE_POWER_PINS
@@ -402,6 +411,7 @@ module lisa_dbg
             .D          ( dbg_di[b]          ),
             .Q          ( brk_r5[b]          )
          );
+`endif
       end
    endgenerate
 
@@ -414,8 +424,8 @@ module lisa_dbg
    assign brk_r[1] = brk_r1;
    assign brk_r[2] = brk_r2;
    assign brk_r[3] = brk_r3;
-`ifdef SIX_BREAK
    assign brk_r[4] = brk_r4;
+`ifdef SIX_BREAK
    assign brk_r[5] = brk_r5;
 `endif
    always @*
@@ -453,11 +463,7 @@ module lisa_dbg
          15:   dbg_do = inst;
          default:
             if (dbg_a[3])
-`ifdef SIX_BREAK
                dbg_do = brk_r[dbg_a[2:0]];
-`else
-               dbg_do = brk_r[dbg_a[1:0]];
-`endif
          endcase
       end
       else if (dbg_a[7:4] == 4'h3)
