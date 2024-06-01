@@ -110,6 +110,7 @@ module debug_regs
    reg  [7:0]  cmd_quad_write_r;
    wire [12:0] ttlc_brk_addr0;
    wire [12:0] ttlc_brk_addr1;
+   wire [12:0] ttlc_brk_addr2;
    reg         ttlc_step;
    reg         ttlc_run;
    wire        dbg_addr_12;
@@ -120,6 +121,7 @@ module debug_regs
    wire        dbg_addr_1f;
    wire        dbg_addr_48;
    wire        dbg_addr_49;
+   wire        dbg_addr_4a;
    (* keep = "true" *)
    wire        dbg_we_12;
    (* keep = "true" *)
@@ -136,6 +138,8 @@ module debug_regs
    wire        dbg_we_48;
    (* keep = "true" *)
    wire        dbg_we_49;
+   (* keep = "true" *)
+   wire        dbg_we_4a;
    wire [9:0]  addr_1c_bits;
    wire [12:0] addr_1e_bits;
 
@@ -159,6 +163,7 @@ module debug_regs
    assign dbg_addr_1f = dbg_a == 8'h1f;
    assign dbg_addr_48 = dbg_a == 8'h48;
    assign dbg_addr_49 = dbg_a == 8'h49;
+   assign dbg_addr_4a = dbg_a == 8'h4a;
 
    assign io_mux_bits = addr_1c_bits[7:0];
    assign clk_div     = addr_1c_bits[9:8];
@@ -230,6 +235,14 @@ module debug_regs
             .VNB(VGND),
       `endif
          .A(dbg_addr_49), .B(dbg_we), .X(dbg_we_49) );
+   sky130_fd_sc_hd__and2_4 and_4a(
+      `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+      `endif
+         .A(dbg_addr_4a), .B(dbg_we), .X(dbg_we_4a) );
 
    // ===================================================================
    // We are generating latches for most of the static flops
@@ -348,6 +361,19 @@ module debug_regs
             .D          ( dbg_di[b]          ),
             .Q          ( ttlc_brk_addr1[b]  )
          );
+         sky130_fd_sc_hd__dlrtp_1   ttlc_brk2_latch
+         (
+         `ifdef USE_POWER_PINS
+            .VPWR(VPWR),
+            .VGND(VGND),
+            .VPB(VPWR),
+            .VNB(VGND),
+         `endif
+            .RESET_B    ( rst_n              ),
+            .GATE       ( dbg_we_4a          ),
+            .D          ( dbg_di[b]          ),
+            .Q          ( ttlc_brk_addr2[b]  )
+         );
       end
    endgenerate
          
@@ -444,7 +470,9 @@ module debug_regs
          else
          begin
             if ((ttlc_brk_addr0 == {1'b1, ttlc_pc} ||
-                ttlc_brk_addr1 == {1'b1, ttlc_pc}) && !ttlc_step)
+                 ttlc_brk_addr1 == {1'b1, ttlc_pc} ||
+                 ttlc_brk_addr2 == {1'b1, ttlc_pc}
+                 ) && !ttlc_step)
             begin
                ttlc_run <= 1'b0;
             end
@@ -500,6 +528,7 @@ module debug_regs
          4'h1: dbg_do = {4'h0, ttlc_pc};
          4'h8: dbg_do = {3'h0, ttlc_brk_addr0};
          4'h9: dbg_do = {3'h0, ttlc_brk_addr1};
+         4'hA: dbg_do = {3'h0, ttlc_brk_addr2};
          default dbg_do = 16'h0;
          endcase
       end
