@@ -144,6 +144,8 @@ module lisa_io_mux
    // TTLC I/O signals
    input  wire             ttlc_io_latch,
    input  wire             ttlc_io_shiftclk,
+   input  wire             ttlc_shiftclk,
+   input  wire             ttlc_reset,
    input  wire [2:0]       ttlc_out_data,
    output wire [2:0]       ttlc_in_data,
 
@@ -252,10 +254,10 @@ module lisa_io_mux
    assign periph_sel2[0] = ttlc_out_data[0];
    assign periph_sel2[1] = ttlc_out_data[1];
    assign periph_sel2[2] = ttlc_out_data[2];
-   assign periph_sel2[3] = 1'b0; //ttlc_out_data[3];
+   assign periph_sel2[3] = ttlc_reset;
    assign periph_sel2[4] = rx_sel == 2'h1 ? debug_tx : 1'b0;
    assign periph_sel2[5] = ttlc_io_latch;
-   assign periph_sel2[6] = ttlc_io_shiftclk;
+   assign periph_sel2[6] = ttlc_io_shiftclk | ttlc_shiftclk;
    assign periph_sel2[7] = 1'b0;
    
    assign ttlc_in_data = ui_in[6:4];

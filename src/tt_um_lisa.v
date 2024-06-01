@@ -324,6 +324,8 @@ module tt_um_lisa
    reg  [12:0]          mc14500_stack[3:0];
    (* keep = "true" *)
    wire                 ttlc_halt;
+   wire                 ttlc_reset;
+   wire                 ttlc_shiftclk;
    wire                 DATA;
    wire                 WRITE;
    wire                 DATA_OUT;
@@ -866,6 +868,8 @@ module tt_um_lisa
       // TTLC Debug signals
       .ttlc_pc                   ( mc14500_pc                ),
       .ttlc_halt                 ( ttlc_halt                 ),
+      .ttlc_reset                ( ttlc_reset                ),
+      .ttlc_shiftclk             ( ttlc_shiftclk             ),
       .ttlc_i_ready              ( ttlc_i_ready              ),
       .ttlc_data_in              ( DATA                      ),
       .ttlc_data_out             ( DATA_OUT                  ),
@@ -976,6 +980,8 @@ module tt_um_lisa
       .ttlc_io_shiftclk          ( ttlc_io_shiftclk          ),
       .ttlc_out_data             ( ttlc_out_data             ),
       .ttlc_in_data              ( ttlc_in_data              ),
+      .ttlc_reset                ( ttlc_reset                ),
+      .ttlc_shiftclk             ( ttlc_shiftclk             ),
 
       // UART inputs                                         
       .baud_ref                  ( baud_ref                  ),

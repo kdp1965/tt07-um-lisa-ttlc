@@ -97,6 +97,8 @@ module debug_regs
 
    input  wire [11:0]         ttlc_pc,
    output wire                ttlc_halt,
+   output reg                 ttlc_reset,
+   output reg                 ttlc_shiftclk,
    input  wire                ttlc_i_ready,
    input  wire                ttlc_data_in,
    input  wire                ttlc_data_out,
@@ -370,6 +372,8 @@ module debug_regs
          dummy_read_cycles <= {{((CHIP_SELECTS-1)*4){1'b0}}, 4'ha};
          cmd_quad_write_r  <= 8'h38;
          plus_guard_time   <= 4'h1;
+         ttlc_reset        <= 1'b0;
+         ttlc_shiftclk     <= 1'b0;
 //         output_mux_bits   <= 16'h0;
 //         io_mux_bits       <= 8'h0;
          cache_disabled    <= 1'b0;
@@ -430,7 +434,7 @@ module debug_regs
          if (dbg_a[7:4] == 4'h4 && dbg_we)
          begin
             case (dbg_a[3:0])    
-            4'h0: {ttlc_step, ttlc_run} <= dbg_di[1:0];
+            4'h0: {ttlc_shiftclk, ttlc_reset, ttlc_step, ttlc_run} <= dbg_di[3:0];
 //            4'h8: ttlc_brk_addr0 <= dbg_di[11:0];
 //            4'h9: ttlc_brk_addr1 <= dbg_di[11:0];
             default:
@@ -492,7 +496,7 @@ module debug_regs
       else if (dbg_a[7:4] == 4'h4 && dbg_rd == 1'b1)
       begin
          case (dbg_a[3:0])
-         4'h0: dbg_do = {11'h0, ttlc_data_out, ttlc_data_in, ttlc_result_reg, ttlc_step, ttlc_run};
+         4'h0: dbg_do = {9'h0, ttlc_data_out, ttlc_data_in, ttlc_result_reg, ttlc_shiftclk, ttlc_reset, ttlc_step, ttlc_run};
          4'h1: dbg_do = {4'h0, ttlc_pc};
          4'h8: dbg_do = {3'h0, ttlc_brk_addr0};
          4'h9: dbg_do = {3'h0, ttlc_brk_addr1};
