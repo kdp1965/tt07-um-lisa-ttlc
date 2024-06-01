@@ -110,6 +110,7 @@ Uses a 14 (or 16) bit program word.  Shown is the 14-bit version.  For 16-bit, e
     10 1000 01111110 ff fdiv                Divide facc / fx (reserved for future, not implemented yet)
     10 1000 1100100000  itof                Convert 16-bit facc to bfloat facc
     10 1000 1100100001  ftoi                Convert 16-bit facc to bfloat facc
+    10 1000 1100100010  fclr                facc <= 0
 
   Relative branch
     10 101b bbbbbbbb   bz    #imm9          Branch (+255 / -256) if zflag == 0
@@ -461,6 +462,7 @@ module lisa_core
    wire                       op_fswap;
    wire                       op_itof;
    wire                       op_ftoi;
+   wire                       op_fclr;
    wire                       op_fcmp;
    reg                        op_tfa_r;
    reg                        op_taf_r;
@@ -471,6 +473,7 @@ module lisa_core
    reg                        op_fswap_r;
    reg                        op_itof_r;
    reg                        op_ftoi_r;
+   reg                        op_fclr_r;
    reg                        op_fcmp_r;
    (* keep = "true" *)
    reg   [15:0]               facc;
@@ -610,6 +613,7 @@ module lisa_core
    assign op_fdiv     = inst[`PWORD_SIZE-1 -: 14] == 14'b10100001111110;
    assign op_itof     = inst[`PWORD_SIZE-1 -: 16] == 16'b1010001100100000;
    assign op_ftoi     = inst[`PWORD_SIZE-1 -: 16] == 16'b1010001100100001;
+   assign op_fclr     = inst[`PWORD_SIZE-1 -: 16] == 16'b1010001100100010;
 `endif
    assign op_brk      = WANT_DBG ? inst[`PWORD_SIZE-1 -: 14] == 14'b10100000011111 : 1'b0;
    assign op_div      = WANT_DIV ? inst[`PWORD_SIZE-1 -: 12] == 12'b10_1000_110000 : 1'b0;
@@ -925,6 +929,7 @@ module lisa_core
          op_fswap_r <= 1'b0;
          op_itof_r <= 1'b0;
          op_ftoi_r <= 1'b0;
+         op_fclr_r <= 1'b0;
          op_fcmp_r <= 1'b0;
 `endif
       end
@@ -1015,6 +1020,7 @@ module lisa_core
          op_fswap_r <= op_fswap;
          op_itof_r <= op_itof;
          op_ftoi_r <= op_ftoi;
+         op_fclr_r <= op_fclr;
          op_fcmp_r <= op_fcmp;
 `endif
       end
@@ -1986,7 +1992,7 @@ module lisa_core
    ==================================================
    */
 `ifdef WANT_BF16
-   assign op_fops = op_tfa_r | op_taf_r | op_fmul_r | op_fadd_r |
+   assign op_fops = op_tfa_r | op_taf_r | op_fmul_r | op_fadd_r | op_fclr_r |
                     op_fneg_r | op_fswap_r | op_itof_r | op_fcmp_r | op_ftoi_r;
    wire [15:0] itof_val;
    wire [15:0] ftoi_val;
@@ -2019,6 +2025,7 @@ module lisa_core
       op_fswap_r: facc_val = fx[inst[1:0]];
       op_itof_r:  facc_val = itof_val;
       op_ftoi_r:  facc_val = ftoi_val;
+      op_fclr_r:  facc_val = 16'h0;
       endcase
    end
 
@@ -2068,6 +2075,7 @@ module lisa_core
             end
          op_itof_r: facc <= facc_val;
          op_ftoi_r: facc <= facc_val;
+         op_fclr_r: facc <= facc_val;
          endcase
          else if (stg2_state & op_fdiv_r & fdiv_ready)
             facc <= facc_val;
@@ -2229,6 +2237,7 @@ module lisa_core
       if (op_fswap)                                ascii_instr = "fswap";
       if (op_itof)                                 ascii_instr = "itof";
       if (op_ftoi)                                 ascii_instr = "ftoi";
+      if (op_fclr)                                 ascii_instr = "fclr";
       if (op_fcmp)                                 ascii_instr = "fcmp";
       if (op_ldirq)                                ascii_instr = "ldirq";
       if (op_stirq)                                ascii_instr = "stirq";
