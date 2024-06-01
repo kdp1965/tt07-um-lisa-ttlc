@@ -4,6 +4,10 @@ branding:
   color: purple
   icon: layers
 
+on:
+  push:
+  workflow_dispatch:
+
 inputs:
   tools-repo:
     description: 'Override tt-support-tools repository'
