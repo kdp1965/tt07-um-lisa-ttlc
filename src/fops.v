@@ -8,6 +8,21 @@ module fadd
 (
     input  wire [16-1:0] a_in, b_in, // Inputs in the format of IEEE-`EXP_W-154 Representation.
     input  wire          round_to_zero,
+
+    input wire	[0:0]                   s_op1_i,
+    input wire	[(`EXP_W +1)-1:0]       extE_op1_i,
+    input wire                         isInf_op1_i,
+    input wire                         isZ_op1_i,
+    input wire                         isSNAN_op1_i,
+    input wire                         isQNAN_op1_i,
+    input wire                         isDN_op1_i,
+    input wire	[0:0]                   s_op2_i,
+    input wire	[(`EXP_W+1)-1:0]        extE_op2_i,
+    input wire                         isInf_op2_i,
+    input wire                         isZ_op2_i,
+    input wire                         isSNAN_op2_i,
+    input wire                         isQNAN_op2_i,
+    input wire                         isDN_op2_i,
     output wire [16-1:0] result // Outputs in the format of IEEE-`EXP_W-154 Representation.
 );
 
@@ -16,7 +31,7 @@ module fadd
    wire output_sign;
    wire operation_sub;
 
-   wire [16-1:0]     operand_a, operand_b;
+   reg  [16-1:0]     operand_a, operand_b;
    wire [2+`M_W+1:0] significand_a, significand_b;
    wire [`EXP_W-1:0] exponent_diff;
 
@@ -26,14 +41,14 @@ module fadd
    wire [2+`M_W+1:0] significand_add;
    wire [2+`M_W+1:0] significand_add_temp;
    reg  [3:0]        leftShift;
-   wire              a_isZ, b_isZ;
-   wire              a_isINF, b_isINF;
-   wire              a_isSNAN, b_isSNAN;
-   wire              a_isQNAN, b_isQNAN;
-   wire              a_isSubnorm, b_isSubnorm;
-   wire              a_assumedOne, b_assumedOne;
-   wire [`EXP_W:0]   a_e;
-   wire [`EXP_W:0]   b_e;
+   reg               a_isZ, b_isZ;
+   reg               a_isINF, b_isINF;
+   reg               a_isSNAN, b_isSNAN;
+   reg               a_isQNAN, b_isQNAN;
+   reg               a_isSubnorm, b_isSubnorm;
+   reg               a_assumedOne, b_assumedOne;
+   reg  [`EXP_W:0]   a_e;
+   reg  [`EXP_W:0]   b_e;
    reg  [`EXP_W:0]   e_res;
    reg  [2+`M_W+1:0] f_res;
    /* verilator lint_off UNUSEDSIGNAL */
@@ -43,23 +58,46 @@ module fadd
 
    assign a_GT_b = (a_in[16-2:0] > b_in[16-2:0]);
 
-   //for operations always operand_a must not be less than b_in
-   assign {operand_a,operand_b} = a_GT_b ? {a_in,b_in} : {b_in,a_in};
+   always @*
+   begin
+      //for operations always operand_a must not be less than b_in
+      if (a_GT_b)
+      begin
+         {operand_a,operand_b}      = {a_in,b_in};
+         {a_isSubnorm, b_isSubnorm} = {isDN_op1_i, isDN_op2_i};
+         {a_isZ, b_isZ}             = {isZ_op1_i, isZ_op2_i};
+         {a_isINF, b_isINF}         = {isInf_op1_i, isInf_op2_i};
+         {a_isSNAN, b_isSNAN}       = {isSNAN_op1_i, isSNAN_op2_i};
+         {a_isQNAN, b_isQNAN}       = {isQNAN_op1_i, isQNAN_op2_i};
+         {a_e, b_e}                 = {extE_op1_i, extE_op2_i};
+      end
+      else
+      begin
+         {operand_a,operand_b}      = {b_in,a_in};
+         {a_isSubnorm, b_isSubnorm} = {isDN_op2_i, isDN_op1_i};
+         {a_isZ, b_isZ}             = {isZ_op2_i, isZ_op1_i};
+         {a_isINF, b_isINF}         = {isInf_op2_i, isInf_op1_i};
+         {a_isSNAN, b_isSNAN}       = {isSNAN_op2_i, isSNAN_op1_i};
+         {a_isQNAN, b_isQNAN}       = {isQNAN_op2_i, isQNAN_op1_i};
+         {a_e, b_e}                 = {extE_op2_i, extE_op1_i};
+      end
+   end
 
-   assign a_isSubnorm  = ~(|operand_a[14 -: 8]) & (|operand_a[6:0]);   // E==0x0   && f!=0x0
-   assign a_isZ        = ~(|operand_a[14:0]);
-   assign a_isINF      = operand_a[14:0] == 15'b111111110000000;
-   assign a_isSNAN     = operand_a[14:0] == 15'b111111110111111;
-   assign a_isQNAN     = operand_a[14:0] == 15'b111111111000000;
-   assign b_isSubnorm  = ~(|operand_b[14 -: 8]) & (|operand_b[6:0]);   // E==0x0   && f!=0x0
-   assign b_isZ        = ~(|operand_b[14:0]);
-   assign b_isINF      = operand_b[14:0] == 15'b111111110000000;
-   assign b_isSNAN     = operand_b[14:0] == 15'b111111110111111;
-   assign b_isQNAN     = operand_b[14:0] == 15'b111111111000000;
+
+//   assign a_isSubnorm  = ~(|operand_a[14 -: 8]) & (|operand_a[6:0]);   // E==0x0   && f!=0x0
+//   assign a_isZ        = ~(|operand_a[14:0]);
+//   assign a_isINF      = operand_a[14:0] == 15'b111111110000000;
+//   assign a_isSNAN     = operand_a[14:0] == 15'b111111110111111;
+//   assign a_isQNAN     = operand_a[14:0] == 15'b111111111000000;
+//   assign b_isSubnorm  = ~(|operand_b[14 -: 8]) & (|operand_b[6:0]);   // E==0x0   && f!=0x0
+//   assign b_isZ        = ~(|operand_b[14:0]);
+//   assign b_isINF      = operand_b[14:0] == 15'b111111110000000;
+//   assign b_isSNAN     = operand_b[14:0] == 15'b111111110111111;
+//   assign b_isQNAN     = operand_b[14:0] == 15'b111111111000000;
    assign a_assumedOne = ~a_isZ & ~a_isSubnorm;
    assign b_assumedOne = ~b_isZ & ~b_isSubnorm;
-   assign a_e          = {1'b0, operand_a[14:`M_W+1], (operand_a[`M_W] | a_isSubnorm)};
-   assign b_e          = {1'b0, operand_b[14:`M_W+1], (operand_b[`M_W] | b_isSubnorm)};
+//   assign a_e          = {1'b0, operand_a[14:`M_W+1], (operand_a[`M_W] | a_isSubnorm)};
+//   assign b_e          = {1'b0, operand_b[14:`M_W+1], (operand_b[`M_W] | b_isSubnorm)};
 
    //Exception flag sets 1 if either one of the exponent is 255.
    assign isINF = a_isINF | b_isINF;
@@ -163,6 +201,20 @@ module fmul
 (
     input [16-1:0] a_in,
     input [16-1:0] b_in,
+    input wire	[0:0]                   s_op1_i,
+    input wire	[(`EXP_W +1)-1:0]       extE_op1_i,
+    input wire                         isInf_op1_i,
+    input wire                         isZ_op1_i,
+    input wire                         isSNAN_op1_i,
+    input wire                         isQNAN_op1_i,
+    input wire                         isDN_op1_i,
+    input wire	[0:0]                   s_op2_i,
+    input wire	[(`EXP_W+1)-1:0]        extE_op2_i,
+    input wire                         isInf_op2_i,
+    input wire                         isZ_op2_i,
+    input wire                         isSNAN_op2_i,
+    input wire                         isQNAN_op2_i,
+    input wire                         isDN_op2_i,
     output [16-1:0] result
 );
 
@@ -187,6 +239,7 @@ module fmul
    wire [`EXP_W:0]   b_e;
    int               e_add;
 
+`ifdef DONT_COMPILE
    assign a_isSubnorm  = ~(|a_in[14 -: 8]) & (|a_in[6:0]);   // E==0x0   && f!=0x0
    assign a_isZ        = ~(|a_in[14:0]);
    assign a_isINF      = a_in[14:0] == 15'b111111110000000;
@@ -199,6 +252,20 @@ module fmul
    assign b_isQNAN     = b_in[14:0] == 15'b111111111000000;
    assign a_e          = {1'b0, a_in[14:`M_W+1], (a_in[`M_W] | a_isSubnorm)};
    assign b_e          = {1'b0, b_in[14:`M_W+1], (b_in[`M_W] | b_isSubnorm)};
+`endif
+
+   assign a_isSubnorm  = isDN_op1_i;
+   assign a_isZ        = isZ_op1_i;
+   assign a_isINF      = isInf_op1_i;
+   assign a_isSNAN     = isSNAN_op1_i;
+   assign a_isQNAN     = isQNAN_op1_i;
+   assign b_isSubnorm  = isDN_op2_i;
+   assign b_isZ        = isZ_op2_i;
+   assign b_isINF      = isInf_op2_i;
+   assign b_isSNAN     = isSNAN_op2_i;
+   assign b_isQNAN     = isQNAN_op2_i;
+   assign a_e          = extE_op1_i;
+   assign b_e          = extE_op2_i;
    assign a_assumedOne = ~a_isZ & ~a_isSubnorm;
    assign b_assumedOne = ~b_isZ & ~b_isSubnorm;
     

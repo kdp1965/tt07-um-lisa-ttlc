@@ -1991,8 +1991,22 @@ module lisa_core
    wire [15:0] itof_val;
    wire [15:0] ftoi_val;
    (* keep = "true" *)
-   reg  [15:0] facc_val;
-   reg         fdiv_r;
+   reg   [15:0] facc_val;
+   reg          fdiv_r;
+	wire	[0:0]                      s_op1_w;
+	wire	[(8+1)-1:0]                extE_op1_w;
+	wire                             isInf_op1_w;
+	wire                             isZ_op1_w;
+	wire                             isSNAN_op1_w;
+	wire                             isQNAN_op1_w;
+	wire                             isDN_op1_w;
+	wire	[0:0]                      s_op2_w;
+	wire	[(8+1)-1:0]                extE_op2_w;
+	wire                             isInf_op2_w;
+	wire                             isZ_op2_w;
+	wire                             isSNAN_op2_w;
+	wire                             isQNAN_op2_w;
+	wire                             isDN_op2_w;
 
    always @*
    begin
@@ -2076,6 +2090,20 @@ module lisa_core
       .a_in          ( facc          ),
       .b_in          ( fadd_op2      ),
       .round_to_zero ( amode[2]      ),
+      .s_op1_i         ( s_op1_w             ),
+      .extE_op1_i      ( extE_op1_w          ),
+      .isInf_op1_i     ( isInf_op1_w         ),
+      .isZ_op1_i       ( isZ_op1_w           ),
+      .isSNAN_op1_i    ( isSNAN_op1_w        ),
+      .isQNAN_op1_i    ( isQNAN_op1_w        ),
+      .isDN_op1_i      ( isDN_op1_w          ),
+      .s_op2_i         ( s_op2_w             ),
+      .extE_op2_i      ( extE_op2_w          ),
+      .isInf_op2_i     ( isInf_op2_w         ),
+      .isZ_op2_i       ( isZ_op2_w           ),
+      .isSNAN_op2_i    ( isSNAN_op2_w        ),
+      .isQNAN_op2_i    ( isQNAN_op2_w        ),
+      .isDN_op2_i      ( isDN_op2_w          ),
       .result        ( fadd_result   )
    );
 
@@ -2084,6 +2112,20 @@ module lisa_core
    (
       .a_in    ( facc          ),
       .b_in    ( fmul_op2      ),
+      .s_op1_i         ( s_op1_w             ),
+      .extE_op1_i      ( extE_op1_w          ),
+      .isInf_op1_i     ( isInf_op1_w         ),
+      .isZ_op1_i       ( isZ_op1_w           ),
+      .isSNAN_op1_i    ( isSNAN_op1_w        ),
+      .isQNAN_op1_i    ( isQNAN_op1_w        ),
+      .isDN_op1_i      ( isDN_op1_w          ),
+      .s_op2_i         ( s_op2_w             ),
+      .extE_op2_i      ( extE_op2_w          ),
+      .isInf_op2_i     ( isInf_op2_w         ),
+      .isZ_op2_i       ( isZ_op2_w           ),
+      .isSNAN_op2_i    ( isSNAN_op2_w        ),
+      .isQNAN_op2_i    ( isQNAN_op2_w        ),
+      .isDN_op2_i      ( isDN_op2_w          ),
       .result  ( fmul_result   )
    );
 
@@ -2101,7 +2143,7 @@ module lisa_core
       .i_o      ( ftoi_val     )
    );
 
-   assign fdiv_op2 = fx[inst[1:0]] & {16{op_fdiv_r}};
+   assign fdiv_op2 = fx[inst[1:0]];
    lampFPU_div_top i_bf16div
    (
       .clk             ( clk                 ),
@@ -2113,7 +2155,21 @@ module lisa_core
       .op2_i           ( fdiv_op2            ),
       .result_o        ( fdiv_result         ),
       .isResultValid_o ( fdiv_valid          ),
-      .isReady_o       ( fdiv_ready          )
+      .isReady_o       ( fdiv_ready          ),
+      .s_op1_r         ( s_op1_w             ),
+      .extE_op1_r      ( extE_op1_w          ),
+      .isInf_op1_r     ( isInf_op1_w         ),
+      .isZ_op1_r       ( isZ_op1_w           ),
+      .isSNAN_op1_r    ( isSNAN_op1_w        ),
+      .isQNAN_op1_r    ( isQNAN_op1_w        ),
+      .isDN_op1_r      ( isDN_op1_w          ),
+      .s_op2_r         ( s_op2_w             ),
+      .extE_op2_r      ( extE_op2_w          ),
+      .isInf_op2_r     ( isInf_op2_w         ),
+      .isZ_op2_r       ( isZ_op2_w           ),
+      .isSNAN_op2_r    ( isSNAN_op2_w        ),
+      .isQNAN_op2_r    ( isQNAN_op2_w        ),
+      .isDN_op2_r      ( isDN_op2_w          )
    );
    assign fdiv_complete = !op_fdiv_r | fdiv_ready;
 `endif

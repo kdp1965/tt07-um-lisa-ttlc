@@ -26,7 +26,21 @@ module lampFPU_div_top (
    input  wire [LAMP_FLOAT_DW-1:0]  op2_i,
    output reg  [LAMP_FLOAT_DW-1:0]  result_o,
    output reg                       isResultValid_o,
-   output wire                      isReady_o
+   output wire                      isReady_o,
+	output reg	[LAMP_FLOAT_S_DW-1:0] 			s_op1_r,
+	output reg	[(LAMP_FLOAT_E_DW+1)-1:0] 		extE_op1_r,
+	output reg									isInf_op1_r,
+	output reg									isZ_op1_r,
+	output reg									isSNAN_op1_r,
+	output reg									isQNAN_op1_r,
+   output reg                          isDN_op1_r,
+	output reg	[LAMP_FLOAT_S_DW-1:0] 			s_op2_r,
+	output reg	[(LAMP_FLOAT_E_DW+1)-1:0] 		extE_op2_r,
+	output reg									isInf_op2_r,
+	output reg									isZ_op2_r,
+	output reg									isSNAN_op2_r,
+	output reg									isQNAN_op2_r,
+   output reg                          isDN_op2_r
 );
 
 // INPUT wires: to drive registered input
@@ -48,18 +62,6 @@ module lampFPU_div_top (
 	// FUs results and valid bits
 	logic									isResValid;
 
-	logic	[LAMP_FLOAT_S_DW-1:0] 			s_op1_r;
-	logic	[(LAMP_FLOAT_E_DW+1)-1:0] 		extE_op1_r;
-	logic									isInf_op1_r;
-	logic									isZ_op1_r;
-	logic									isSNAN_op1_r;
-	logic									isQNAN_op1_r;
-	logic	[LAMP_FLOAT_S_DW-1:0] 			s_op2_r;
-	logic	[(LAMP_FLOAT_E_DW+1)-1:0] 		extE_op2_r;
-	logic									isInf_op2_r;
-	logic									isZ_op2_r;
-	logic									isSNAN_op2_r;
-	logic									isQNAN_op2_r;
 	//	mul/div only
 	logic	[(1+LAMP_FLOAT_F_DW)-1:0] 		extShF_op1_r;
 	logic	[$clog2(1+LAMP_FLOAT_F_DW)-1:0]	nlz_op1_r;
@@ -209,12 +211,12 @@ module lampFPU_div_top (
 
    always_comb
    begin
-      s_op1_r			=	s_op1_wire;
-      extE_op1_r		=	extE_op1_wire;
-      isInf_op1_r		=	isInf_op1_wire;
-      isZ_op1_r		=	isZ_op1_wire;
-      isSNAN_op1_r	=	isSNAN_op1_wire;
-      isQNAN_op1_r	=	isQNAN_op1_wire;
+//      s_op1_r			=	s_op1_wire;
+//      extE_op1_r		=	extE_op1_wire;
+//      isInf_op1_r		=	isInf_op1_wire;
+//      isZ_op1_r		=	isZ_op1_wire;
+//      isSNAN_op1_r	=	isSNAN_op1_wire;
+//      isQNAN_op1_r	=	isQNAN_op1_wire;
       extShF_op1_r	=	extShF_op1_wire;
       nlz_op1_r		=	nlz_op1_wire;
    end
@@ -223,18 +225,20 @@ module lampFPU_div_top (
 	begin
 		if (rst)
 		begin
-//			s_op1_r			<=	'0;
-//			extE_op1_r		<=	'0;
-//			isInf_op1_r		<=	'0;
-//			isZ_op1_r		<=	'0;
-//			isSNAN_op1_r	<=	'0;
-//			isQNAN_op1_r	<=	'0;
+			s_op1_r			<=	'0;
+			extE_op1_r		<=	'0;
+			isInf_op1_r		<=	'0;
+			isZ_op1_r		<=	'0;
+			isSNAN_op1_r	<=	'0;
+			isQNAN_op1_r	<=	'0;
+         isDN_op1_r     <= '0;
 			s_op2_r			<=	'0;
 			extE_op2_r		<=	'0;
 			isInf_op2_r		<=	'0;
 			isZ_op2_r		<=	'0;
 			isSNAN_op2_r	<=	'0;
 			isQNAN_op2_r	<=	'0;
+         isDN_op2_r     <= '0;
 			//	mul/div only
 //			extShF_op1_r	<=	'0;
 //			nlz_op1_r		<=	'0;
@@ -243,18 +247,20 @@ module lampFPU_div_top (
 		end
 		else
 		begin
-//			s_op1_r			<=	s_op1_wire;
-//			extE_op1_r		<=	extE_op1_wire;
-//			isInf_op1_r		<=	isInf_op1_wire;
-//			isZ_op1_r		<=	isZ_op1_wire;
-//			isSNAN_op1_r	<=	isSNAN_op1_wire;
-//			isQNAN_op1_r	<=	isQNAN_op1_wire;
+			s_op1_r			<=	s_op1_wire;
+			extE_op1_r		<=	extE_op1_wire;
+			isInf_op1_r		<=	isInf_op1_wire;
+			isZ_op1_r		<=	isZ_op1_wire;
+			isSNAN_op1_r	<=	isSNAN_op1_wire;
+			isQNAN_op1_r	<=	isQNAN_op1_wire;
+         isDN_op1_r     <= isDN_op1_wire;
 			s_op2_r			<=	s_op2_wire;
 			extE_op2_r		<=	extE_op2_wire;
 			isInf_op2_r		<=	isInf_op2_wire;
 			isZ_op2_r		<=	isZ_op2_wire;
 			isSNAN_op2_r	<=	isSNAN_op2_wire;
 			isQNAN_op2_r	<=	isQNAN_op2_wire;
+         isDN_op2_r     <= isDN_op2_wire;
 			//	mul/div only
 //			extShF_op1_r	<=	extShF_op1_wire;
 //			nlz_op1_r		<=	nlz_op1_wire;
