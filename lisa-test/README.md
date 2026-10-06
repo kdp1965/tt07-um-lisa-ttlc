@@ -151,12 +151,30 @@ TT07 board:
   register increments PC afterwards (`dbg_inc`: it is meant for loading code),
   which looks like "stepping" if you poll it. The app never touches 0xf; the
   opcode shown is read from the flash at `2 × PC`.
-* **The TTLC input scan shifts 17 times** (`shift_reg_io.v`: the input shift
-  condition fires once more after the last falling edge, when `last_clk` only
-  suppresses the clock toggle). The TTLC keeps the last 16 samples, so real
-  74HC166 chains — which hold their last bit — would make every input read one
-  position too high. The emulator compensates by presenting bit 15 after the
-  first falling edge and leaving bit 0 on the lines for that 17th sample.
+* **The TTLC input scan shifts 17 times** (`shift_reg_io.v`, state
+  `SHIFT_IO`). The input shift is keyed on `!shift_clk && clk_count == 0` (the
+  clock is low and about to toggle), which is right for the 16 real rising
+  edges — but after the 16th falling edge the FSM waits one more clock period
+  before going to `LATCH`, and in that period the toggle is suppressed by
+  `last_clk` (`if (shift_clk | ~last_clk)`) while the shift condition is still
+  true. The `shift_count` decrement next to it is gated with `!last_clk`; the
+  input shift is not. The 16-bit register keeps the last 16 of the 17 samples:
+  the chain's bit 15 is shifted out, bits 14…0 land in bits 15…1, and bit 0
+  gets sample 17 — the level the data line holds after the last clock, i.e.
+  the chain's last bit again. Per 16-bit segment, `input_pins[i] = external
+  bit i-1` and `input_pins[0] = external bit 0`: with real 74HC165/166 chains
+  every input reads one position too high, inputs 0/1, 16/17, 32/33 are
+  identical, and inputs 15, 31, 47 cannot be read. (The loopback showed it as
+  `0001 → 0003`, `aaaa → 5554`.) RTL fix: add `&& !last_clk` to the input
+  shift condition. The emulator compensates by presenting each bit one edge
+  later — bit 15 after the first falling edge, so the first (discarded) sample
+  is just the stale line, and bit 0 after the 16th falling edge, where the
+  17th sample picks it up.
+* **The latch pulse cannot load a 74HC166.** `latch` is pulsed low before the
+  scan with the shift clock held still; a 74HC166 loads its parallel inputs
+  only on a clock edge while /PE is low, so on a real I/O Pmod use a 74HC165
+  (asynchronous /PL) for the inputs. The output side (74HC595: data on rising
+  edges, RCLK pulse after the 16 clocks) matches the RTL as is.
 * **The TTLC step bit cannot work** (`ttlc_halt = !run | step` blocks the fetch
   whose `ttlc_i_ready` would clear `step`), and **its breakpoints stop one
   instruction late** when the next instruction is already in the single 4-word
