@@ -5,7 +5,7 @@
 //   node hw_test.mjs                             # all scenarios
 //   node hw_test.mjs connect debug disconnect    # some of them
 //
-// Scenarios: connect, direct, vialisa, verify, debug, disconnect.  "direct"
+// Scenarios: connect, direct, vialisa, verify, debug, ttlc, disconnect.  "direct"
 // and "vialisa" program the bring-up demo (an altered copy, then the
 // original) into the flash at address 0 - the flash contents are replaced.
 import fs from 'node:fs';
@@ -63,7 +63,7 @@ const fw = parseFirmware('bringup_tt07', new TextEncoder().encode(globalThis.LIS
 const alt = Uint8Array.from(fw.bytes);
 { const w = globalThis.LisaCore.toWords(fw.bytes); const i = w.findIndex((v, k) => v === 0x8041 && w[k + 2] === 0x8021); alt[2 * (i + 2)] = 0x2a; }
 
-const scenarios = process.argv.slice(2).length ? process.argv.slice(2) : ['connect', 'direct', 'vialisa', 'verify', 'debug', 'disconnect'];
+const scenarios = process.argv.slice(2).length ? process.argv.slice(2) : ['connect', 'direct', 'vialisa', 'verify', 'debug', 'ttlc', 'disconnect'];
 try {
   for (const sc of scenarios) {
     console.log(`\n===== ${sc} =====`);
@@ -154,6 +154,78 @@ try {
       check(true, 'manual "v" typed in the console answered ' + JSON.stringify(consoleBuf));
       await cmdr.initLisa();
       check(cmdr.state().halted, 're-init works');
+    } else if (sc === 'ttlc') {
+      const { ttlcDisassemble } = globalThis.LisaCore;
+      const enc = s => new TextEncoder().encode(s);
+      const lb = parseFirmware('ttlc_loopback.hex', enc(globalThis.LISA_ASSETS.ttlc_firmware['ttlc_loopback.hex']));
+      let t = Date.now();
+      await cmdr.programTtlc(lb.bytes, 0x10000, 3, true);
+      log(`TTLC loopback programmed directly at 0x10000 in ${(Date.now() - t) / 1000} s`);
+      const st0 = await cmdr.ttlcStatus();
+      check(!st0.run && st0.pc === 0 && cmdr.state().ttlc.enabled, `TTLC halted at PC 0 after programming; code: ${st0.code.words.slice(0, 3).map(w => ttlcDisassemble(w).trim()).join(' | ')}`);
+      const s1 = await cmdr.ttlcStep();
+      check(s1.completed && s1.newPC === 1, `TTLC step: ${ttlcDisassemble(s1.op).trim()} at 0 -> PC ${s1.newPC} (nopo stalls, so exactly one)`);
+      let p = 1;
+      for (let i = 0; i < 4; i++) {
+        const s2 = await cmdr.ttlcStep();
+        check(s2.completed && (s2.newPC === p + 1 || s2.newPC === p + 2), `TTLC step: ${ttlcDisassemble(s2.op).trim()} at ${p} -> PC ${s2.newPC}`);
+        p = s2.newPC;
+      }
+      // one scan: runs to the nopo at 0 and through it
+      const sc = await cmdr.ttlcScan([0]);
+      check(sc.completed && sc.newPC === 1, `TTLC scan: stopped after the nopo at PC ${sc.newPC}`);
+      await cmdr.ttlcRun(0x123456789abcn);
+      check(cmdr.state().ttlc.sim, 'I/O emulator started with the TTLC');
+      for (const pat of [0x123456789abcn, 1n, 0x800000000000n, 0xaaaaaaaaaaaan, 0xffffffffffffn, 0n]) {
+        await cmdr.ttlcSetInputs(pat); await sleep(60);
+        const out = await cmdr.ttlcOutputs();
+        check(out === pat, `loopback: inputs ${pat.toString(16).padStart(12, '0')} -> outputs ${out.toString(16).padStart(12, '0')}`);
+      }
+      consoleBuf = '';
+      await cmdr.run();
+      await cmdr.consoleSend(enc('?'));
+      await waitConsole(/Hello from TT07 LISA./);
+      check(true, 'LISA runs and answers on the console while the TTLC scans');
+      const out2 = await cmdr.ttlcOutputs();
+      check(out2 === 0n, 'emulator still answers (sideband) while LISA owns the UART');
+      const h = await cmdr.ttlcHalt();
+      check(!h.run, `TTLC halted at PC 0x${h.pc.toString(16)}`);
+      // the elevator example, programmed through LISA at another base
+      const el = parseFirmware('elevator_ctrl.hex', enc(globalThis.LISA_ASSETS.ttlc_firmware['elevator_ctrl.hex']));
+      t = Date.now();
+      await cmdr.programTtlc(el.bytes, 0x20000, 3, false);
+      log(`elevator example programmed via LISA at 0x20000 in ${(Date.now() - t) / 1000} s`);
+      await cmdr.ttlcRun(0n); await sleep(100);
+      let o = await cmdr.ttlcOutputs();
+      check((o & 1n) === 0n, `elevator idle: UP1_LED off (outputs ${o.toString(16)})`);
+      await cmdr.ttlcSetInputs(1n); await sleep(100);        // UP1 = input 0
+      o = await cmdr.ttlcOutputs();
+      check((o & 1n) === 1n, `UP1 pressed -> UP1_LED on (outputs ${o.toString(16)})`);
+      await cmdr.ttlcSetInputs(0n); await sleep(100);
+      o = await cmdr.ttlcOutputs();
+      check((o & 1n) === 1n, `UP1 released -> UP1_LED stays latched by UP1_HOLD (outputs ${o.toString(16)})`);
+      await cmdr.ttlcHalt();
+      // from a scan boundary (PC 1), step through the elevator's control flow:
+      // the jmp at 0xd to test_jump (0x19), its rtn back to 0xe, the nopf at 0x13 to 0
+      const elWords = globalThis.LisaCore.toWords(el.bytes);
+      const sc2 = await cmdr.ttlcScan(elWords.map((w, a) => (w & 0xf) === 0 ? a : -1).filter(a => a >= 0));
+      check(sc2.completed && sc2.newPC === 1, `elevator: scan stops after the nopo at PC ${sc2.newPC}`);
+      const trace = [];
+      let steps = 0;
+      for (let i = 0; i < 24; i++) {
+        let r;
+        try { r = await cmdr.ttlcStep(); }
+        catch (e) {                         // an rtn whose jmp ran as the "one late" instruction: not trackable
+          trace.push('(rtn: unknown target)');
+          await cmdr.ttlcScan(elWords.map((w, a) => (w & 0xf) === 0 ? a : -1).filter(a => a >= 0));
+          continue;
+        }
+        trace.push(`${ttlcDisassemble(r.op).split(/\s+/)[0]}@${r.fromPC.toString(16)}->${r.newPC.toString(16)}`);
+        if (r.completed) steps++;
+      }
+      check(steps >= 20, `TTLC stepping through the elevator program (${steps} completed): ` + trace.slice(0, 16).join(' '));
+      await cmdr.disableTtlc();
+      check(!cmdr.state().ttlc.enabled && !cmdr.state().ttlc.sim, 'TTLC disabled, emulator stopped, uo_out back to LISA');
     } else if (sc === 'disconnect') {
       await cmdr.disconnect();
       check(!cmdr.connected, 'disconnected');

@@ -15,6 +15,12 @@ Usage, with the LISA project already enabled:
 
 Send Ctrl-C (0x03) to stop it and get the REPL back.
 
+Sideband: a NUL byte (0x00) from the USB side starts a line of Python that is
+run on the board when its newline arrives (instead of being forwarded), with
+its output sent back between two NUL bytes.  LISA traffic never contains NUL,
+and the pass-through keeps flowing meanwhile.  The web app uses this to drive
+the TTLC I/O emulator while the console stays attached to LISA.
+
 The LISA Commander web app (lisa-test/web) installs this file on the board
 and keeps it up to date; lisa_pydb.py --init uses it too.
 '''
@@ -22,7 +28,7 @@ import sys
 import select
 import machine
 
-VERSION = '2.0'
+VERSION = '2.1'
 
 
 def passthrough(baudrate=115200):
@@ -38,16 +44,37 @@ def passthrough(baudrate=115200):
 
     poll = select.poll()
     poll.register(sys.stdin, select.POLLIN)
+    cmd = None
 
     while True:
-        # USB serial -> LISA
+        # USB serial -> LISA (or a sideband command line)
         if poll.poll(0):
-            uart.write(usb_in.read(1))
+            c = usb_in.read(1)
+            if cmd is not None:
+                if c == b'\n':
+                    _sideband(bytes(cmd), usb_out)
+                    cmd = None
+                else:
+                    cmd += c
+            elif c == b'\x00':
+                cmd = bytearray()
+            else:
+                uart.write(c)
 
         # LISA -> USB serial
         n = uart.any()
         if n:
             usb_out.write(uart.read(n))
+
+
+def _sideband(src, out):
+    import __main__
+    out.write(b'\x00')
+    try:
+        exec(src.decode(), __main__.__dict__)
+    except Exception as e:
+        print('@error=' + repr(e))
+    out.write(b'\x00')
 
 
 try:

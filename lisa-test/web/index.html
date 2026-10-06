@@ -115,6 +115,17 @@
   .tag.run { border-color: rgba(12,163,12,.6); color: #7fd87f; }
   .tag.halt { border-color: rgba(250,178,25,.6); color: #ffd36a; }
   .tag.lisa { border-color: rgba(57,135,229,.7); color: #8ab9f0; }
+  .iogrid { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 3px; margin-top: 4px; }
+  .iogrid .cell {
+    height: 20px; border-radius: 4px; background: #2a2a28; border: 1px solid transparent;
+    font: 600 9.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted);
+    display: flex; align-items: center; justify-content: center; user-select: none;
+  }
+  .iogrid .cell.on { background: #1f9a1f; color: #fff; }
+  .iogrid .inp { cursor: pointer; border-color: var(--border); }
+  .iogrid .inp:hover { border-color: rgba(255,255,255,.35); }
+  .iogrid .inp.on { background: var(--accent); color: #fff; }
+  .iolabel { font-size: 10.5px; color: var(--muted); margin-top: 8px; display: flex; justify-content: space-between; }
   #term {
     font: 13.5px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     background: #050505; color: #d8d8d0; border: 1px solid var(--grid); border-radius: 8px;
@@ -227,6 +238,44 @@
         <button id="btnStack" disabled title="Halt and dump the 128-byte data RAM (read through IX), with SP marked">RAM / stack</button>
       </div>
       <div class="mono" id="stackOut"></div>
+    </div>
+
+    <div class="panel">
+      <h2>TTLC — MC14500B logic controller <span class="spacer"></span><span class="tag" id="tagTtlc">off</span></h2>
+      <div class="field"><span>program</span>
+        <select id="ttlcSel"></select></div>
+      <div class="field" id="ttlcFileRow" style="margin-top:8px;display:none"><span>file (<code>@addr</code> + hex bytes from <code>mc14500_as.py</code>, or 4-digit opcodes)</span>
+        <input type="file" id="ttlcFile"></div>
+      <div class="hint" id="ttlcInfo">—</div>
+      <div class="row" style="margin-top:8px">
+        <div class="field" style="flex:1"><span>flash base (hex, 64 KB aligned)</span>
+          <input type="text" id="ttlcBase" value="0x010000" spellcheck="false"></div>
+        <div class="field" style="flex:1"><span>shift clock</span>
+          <select id="ttlcClk">
+            <option value="0">clk / 4 (12.5 MHz)</option>
+            <option value="1">clk / 8 (6.25 MHz)</option>
+            <option value="2">clk / 16 (3.1 MHz)</option>
+            <option value="3" selected>clk / 32 (1.6 MHz)</option>
+          </select></div>
+      </div>
+      <div class="actions" style="margin-top:10px">
+        <button id="btnTtlcProgram" class="primary" disabled title="Program the TTLC image at its flash base (with the method chosen above), then run it">Program &amp; run</button>
+        <button id="btnTtlcRun" disabled>Run</button>
+        <button id="btnTtlcHalt" disabled>Halt</button>
+        <button id="btnTtlcStep" disabled title="Step one instruction (the TTLC stops one instruction late when the next one is already cached)">Step</button>
+        <button id="btnTtlcScan" disabled title="Run one PLC cycle: until the next nopo (I/O scan) has executed">Scan</button>
+        <button id="btnTtlcRestart" disabled title="Reset the chip (TTLC PC = 0) and run again">Restart</button>
+      </div>
+      <div class="hint">The TTLC's 48 outputs / 48 inputs are the three 74HC595 / 74HC166 chains on <code>uo_out</code> / <code>ui_in</code>;
+        the RP2040 plays them (PIO + DMA), so no Pmod is needed. Keep the TTLC base away from the LISA image.</div>
+      <dl class="kv" style="margin-top:8px"><dt>state</dt><dd id="ttlcState">—</dd></dl>
+      <div class="mono" id="ttlcDisasm"></div>
+      <div class="iolabel"><span>outputs 0 – 47 (as last scanned out)</span>
+        <span class="checkrow" style="padding:0"><input type="checkbox" id="ttlcLive" checked><label for="ttlcLive">live</label></span></div>
+      <div class="iogrid" id="ttlcOut"></div>
+      <div class="iolabel"><span>inputs 0 – 47 (click to toggle; address 48 + n)</span>
+        <span><a href="#" id="ttlcInClear">all off</a></span></div>
+      <div class="iogrid" id="ttlcIn"></div>
     </div>
   </aside>
 
@@ -544,6 +593,8 @@ class LisaDebug {
     this.lisaHasUart = false;     // after the 'l' command, until +++
     this.halted = true;           // the core starts halted after reset
     this.flashBase = 0;
+    this.ttlcBase = 0;
+    this.ttlcStack = [];           // return addresses of stepped TTLC jmps (the hardware stack is not readable)
     board.onPassData = u8 => this._onPass(u8);
   }
 
@@ -557,15 +608,27 @@ class LisaDebug {
   // Send text; the UART is LISA's, so no response is expected.
   async send(data) { this._requireIdle(); await this.board.write(data); }
 
-  // Send text and wait until `re` matches the reply; bytes after the match go to the console.
-  cmd(text, re, timeoutMs, what) {
+  // Resolves once no transaction is in progress (console input waits for polls to finish).
+  idle(timeoutMs = 2000) {
+    return new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const tick = () => { if (!this.txn) resolve(); else if (Date.now() - t0 > timeoutMs) reject(new Error('the debugger link is busy')); else setTimeout(tick, 5); };
+      tick();
+    });
+  }
+
+  // Send text and wait until `re` matches the reply; bytes after the match go to
+  // the console (and bytes before it too, with keepPrefix - used by the sideband,
+  // whose reply can be interleaved with LISA's output).
+  cmd(text, re, timeoutMs, what, keepPrefix = false) {
     this._requireIdle();
     return new Promise((resolve, reject) => {
       const txn = { s: '', check: () => {
         const m = re.exec(txn.s);
         if (!m) return;
         finish();
-        const rest = txn.s.slice(m.index + m[0].length);
+        const before = txn.s.slice(0, m.index), rest = txn.s.slice(m.index + m[0].length);
+        if (keepPrefix && before && !this.muted) this.onConsole(bytesOf(before));
         if (rest && !this.muted) this.onConsole(bytesOf(rest));
         resolve(m);
       } };
@@ -763,6 +826,124 @@ class LisaDebug {
     return { pc, op, targets, completed, newPC: await this.readReg(2) };
   }
 
+  // ---- sideband: run one line of Python on the board through the pass-through
+  //      (uartPass.py 2.1+): NUL + line + LF, reply framed by two NULs.
+  async sideband(line, timeoutMs = 3000) {
+    await this.idle();
+    const m = await this.cmd('\x00' + line + '\n', /\x00([^\x00]*)\x00/, timeoutMs, `the board command ${JSON.stringify(line)}`, true);
+    const r = {}, other = [];
+    for (const l of stripAnsi(m[1]).split('\n')) {
+      const mm = /^@([a-z]+)=(.*)$/.exec(l.trim());
+      if (mm) r[mm[1]] = mm[2]; else if (l.trim()) other.push(l.trim());
+    }
+    if (r.error) throw new Error(`board: ${r.error}`);
+    return { r, other };
+  }
+
+  // ---- TTLC (the MC14500B logic controller) ----
+
+  // TTLC registers: program base, the uo_out mux carrying the shift-register
+  // signals, the shift clock divider, and a TTLC instruction-cache invalidate.
+  async ttlcSetup(base, clkDiv) {
+    this.ttlcBase = base;
+    const regs = [
+      [0x1f, base >>> 8],              // instruction address = {reg, 8'h0} | (pc << 1)
+      [0x1b, 0x3cff],                  // uo_out 0-2: data out, 3: ttlc_reset, 5: latch, 6: shift clock; 4 stays debug TX
+      [0x1c, (clkDiv & 3) << 8],       // shift clock = clk / (4 << clkDiv)
+    ];
+    for (const [a, v] of regs) await this.writeReg(a, v);
+    await this.writeReg(0x1d, 0x47);   // invalidate the TTLC instruction cache (data cache stays off)
+    for (const [a, v] of regs) {
+      const r = await this.readReg(a);
+      if (r !== v) throw new Error(`register 0x${hex2(a)} reads back 0x${hex4(r)}, expected 0x${hex4(v)}`);
+    }
+  }
+
+  async ttlcStatus() {
+    const st = await this.readReg(0x40), pc = await this.readReg(0x41);
+    return { run: !!(st & 1), rr: (st >> 4) & 1, dataIn: (st >> 5) & 1, dataOut: (st >> 6) & 1, pc: pc & 0xfff, raw: st };
+  }
+  ttlcRun()  { return this.writeReg(0x40, 1); }
+  ttlcHalt() { return this.writeReg(0x40, 0); }
+
+  async ttlcReadProgram(addr, n) {
+    await this.setDebugAddress(this.ttlcBase + 2 * addr);
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(await this.readReg(0x20));
+    await this.setDebugAddress(this.flashBase);
+    return out;
+  }
+
+  // Run until one of `addrs` is reached, with the TTLC's three breakpoints.
+  // The compare runs a clock behind the fetch, so when the instruction at the
+  // breakpoint is already in the (single, 4-word) instruction cache it is
+  // executed before the halt: the TTLC usually stops at addr + 1.
+  async _ttlcRunTo(addrs, timeoutMs) {
+    addrs = [...new Set(addrs)].slice(0, 3);
+    for (let i = 0; i < addrs.length; i++) await this.writeReg(0x48 + i, 0x1000 | (addrs[i] & 0xfff));
+    let stopped = false;
+    try {
+      await this.ttlcRun();
+      const t0 = Date.now();
+      while (Date.now() - t0 < timeoutMs) {
+        if (!((await this.readReg(0x40)) & 1)) { stopped = true; break; }
+      }
+      if (!stopped) await this.ttlcHalt();
+    } finally {
+      for (let i = 0; i < addrs.length; i++) await this.writeReg(0x48 + i, 0);
+    }
+    return stopped;
+  }
+
+  // Single step: break on where the instruction at PC can continue.  Its own
+  // step bit blocks the fetch it needs to clear itself, and a breakpoint on
+  // the current PC only frees `run` for one clock - never enough.  Because of
+  // the late compare (see _ttlcRunTo) the instruction at the target usually
+  // executes as well - and if that one is a jmp/rtn/nopf its PC change is
+  // lost (the halt lands between its decode and the PC update), so around
+  // control flow prefer Scan.  JMP and RTN are tracked so RTN's target is
+  // known once its JMP was stepped.
+  async ttlcStep() {
+    await this.ensureDebugger();
+    await this.ttlcHalt();
+    const pc = (await this.ttlcStatus()).pc;
+    const op = (await this.ttlcReadProgram(pc, 1))[0];
+    const code = op & 0xf, addr = (op >> 4) & 0xfff, seq = (pc + 1) & 0xfff;
+    let targets;
+    if (code === 0xc) targets = [addr];
+    else if (code === 0xd) {
+      if (!this.ttlcStack.length) throw new Error(`cannot step the rtn at 0x${pc.toString(16).padStart(3, '0')}: the TTLC call stack is not readable (step from its jmp, or use Scan)`);
+      targets = [this.ttlcStack[this.ttlcStack.length - 1]];
+    }
+    else if (code === 0xe) targets = [seq, (pc + 2) & 0xfff];
+    else if (code === 0xf) targets = [0];
+    else targets = [seq];
+    targets = targets.filter(t => t !== pc);
+    if (!targets.length) throw new Error(`cannot step at 0x${pc.toString(16).padStart(3, '0')}: ${ttlcDisassemble(op)} only leads back to itself`);
+    const completed = await this._ttlcRunTo(targets, 500);
+    if (code === 0xc) this.ttlcStack.push(seq);
+    else if (code === 0xd) this.ttlcStack.pop();
+    const st = await this.ttlcStatus();
+    return { fromPC: pc, op, targets, completed, newPC: st.pc };
+  }
+
+  // One PLC cycle: run until the next NOPO (scan) has executed.  `nopos` are
+  // the NOPO addresses of the program (from its image).
+  async ttlcScan(nopos) {
+    await this.ensureDebugger();
+    if (!nopos.length) throw new Error('the program has no nopo, so there is no scan to run to');
+    let completed = await this._ttlcRunTo(nopos, 2000);
+    this.ttlcStack = [];
+    let st = await this.ttlcStatus();
+    // reached the nopo but not through it (its cache line was cold): one more
+    // step executes exactly the nopo, since its scan stalls the core
+    if (completed && nopos.includes(st.pc)) {
+      completed = await this._ttlcRunTo([(st.pc + 1) & 0xfff], 500);
+      st = await this.ttlcStatus();
+    }
+    return { completed, newPC: st.pc, status: st };
+  }
+
   async awaitFlashReady(timeoutMs) {
     const t0 = Date.now();
     for (;;) {
@@ -778,7 +959,6 @@ class LisaDebug {
     const words = toWords(bytes);
     await this.halt();
     await this.setPC(0);
-    await this.setup(base);
     for (let a = base; a < base + bytes.length; a += 0x10000) {      // 64 KB block erase(s)
       await this.setDebugAddress(a);
       await this.writeReg(0x21, 0x0006);                             // write enable
@@ -791,6 +971,7 @@ class LisaDebug {
       if (parseInt(m[1], 16) & 0xff) await this.awaitFlashReady(5000);
       if ((i & 15) === 15 || i === words.length - 1) onProgress?.(i + 1, words.length);
     }
+    await this.setDebugAddress(this.flashBase);
     await this.setPC(0);
   }
 
@@ -969,6 +1150,22 @@ function disassemble(op, pc = 0) {
   }
 }
 
+// MC14500B: 4-bit opcode in inst[3:0], 12-bit I/O address in inst[15:4].
+const TTLC_MNEMONIC = ['nopo', 'ld', 'ldc', 'and', 'andc', 'or', 'orc', 'xnor', 'sto', 'stoc', 'ien', 'oen', 'jmp', 'rtn', 'skz', 'nopf'];
+function ttlcAddrName(a) {
+  if (a < 48) return `out${a}`;
+  if (a < 96) return `in${a - 48}`;
+  if (a < 128) return `mem${a - 96}` + (a < 104 ? ' (to LISA)' : a === 104 ? ' (LISA irq)' : '');
+  if (a < 136) return `lisa${a - 128}`;
+  return a === 136 ? 'RR' : a === 137 ? '0' : a === 138 ? '1' : `?${a}`;
+}
+function ttlcDisassemble(op) {
+  const code = op & 0xf, a = (op >> 4) & 0xfff, m = TTLC_MNEMONIC[code];
+  if (code === 0 || code === 0xd || code === 0xe || code === 0xf) return m;
+  if (code === 0xc) return fmt(m, '0x' + a.toString(16).padStart(3, '0'));
+  return fmt(m, `${a}  ; ${ttlcAddrName(a)}`);
+}
+
 // Lines for a code window: ldx shows its operand (the following word), and
 // that word is marked as data rather than decoded as an instruction.
 function disassembleWindow(words, start) {
@@ -1028,6 +1225,9 @@ class LisaCommander {
     this.link = null; this.board = null; this.lisa = null;
     this.info = {};
     this.flashBase = 0;
+    // the TTLC (MC14500B) side: its own flash base, shift-clock divider, and
+    // whether its registers / the RP2040 I/O emulator are active
+    this.ttlc = { base: 0x10000, clkDiv: 3, enabled: false, sim: false };
   }
 
   get connected() { return !!this.link && !this.link.closing; }
@@ -1039,6 +1239,7 @@ class LisaCommander {
       halted: this.lisa ? this.lisa.halted : null,
       lisaHasUart: this.lisa ? this.lisa.lisaHasUart : null,
       info: this.info,
+      ttlc: { ...this.ttlc },
     };
   }
   _changed() { this.onState(this.state()); }
@@ -1119,9 +1320,11 @@ class LisaCommander {
   }
 
   async _loadHelper() {
-    const { r, other } = parseResults(await this.board.exec("import gc\ngc.collect()\n" + this.assets['lisa_flash.py']));
+    const { r, other } = parseResults(await this.board.exec(
+      "import gc\ngc.collect()\n" + this.assets['lisa_flash.py'] + this.assets['ttlc_sim.py']));
     other.forEach(l => this.log('[board] ' + l, 'dim'));
-    if (r.helper !== '1') throw new Error('the board-side helper did not load');
+    if (r.helper !== '1' || r.ttlcsim !== '1') throw new Error('the board-side helpers did not load');
+    this.ttlc.sim = false;
   }
 
   async _probeFlash() {
@@ -1163,6 +1366,10 @@ class LisaCommander {
     this.log(`LISA debugger answers: ${this.info.debugger}`);
     await this.lisa.setup(this.flashBase);
     this.log(`debugger registers set up and verified (flash base 0x${hex6(this.flashBase)}, cache off)`);
+    if (this.ttlc.enabled) {
+      await this.lisa.ttlcSetup(this.ttlc.base, this.ttlc.clkDiv);
+      this.log(`TTLC registers set up (program base 0x${hex6(this.ttlc.base)}, shift clock /${4 << this.ttlc.clkDiv}); TTLC halted at PC 0`, 'dim');
+    }
     this._changed();
   }
 
@@ -1221,8 +1428,78 @@ class LisaCommander {
 
   async programViaLisa(bytes, base, onProgress) {
     this.flashBase = base;
+    await this.lisa.ensureDebugger();
+    await this.lisa.setup(base);
     await this.lisa.programFlash(bytes, base, onProgress);
     this._changed();
+  }
+
+  // ---- TTLC ----
+
+  // Run a debugger operation, handing the UART back to a running LISA program afterwards.
+  async _debuggerOp(fn) {
+    const had = this.lisa.lisaHasUart;
+    await this.lisa.ensureDebugger();
+    try { return await fn(); }
+    finally { if (had && !this.lisa.halted) await this.lisa.grant(); this._changed(); }
+  }
+
+  async enableTtlc(base, clkDiv) {
+    this.ttlc.base = base; this.ttlc.clkDiv = clkDiv; this.ttlc.enabled = true;
+    await this._debuggerOp(() => this.lisa.ttlcSetup(base, clkDiv));
+  }
+
+  async disableTtlc() {
+    if (this.ttlc.sim) await this.ttlcSim(false);
+    this.ttlc.enabled = false;
+    await this._debuggerOp(async () => { await this.lisa.ttlcHalt(); await this.lisa.setup(this.flashBase); });
+  }
+
+  // Program a TTLC image at its own flash base; ends with a chip reset so the TTLC PC is 0.
+  async programTtlc(bytes, base, clkDiv, direct, onProgress) {
+    this.ttlc.base = base; this.ttlc.clkDiv = clkDiv; this.ttlc.enabled = true;
+    if (direct) {
+      await this.programDirect(bytes, base, onProgress);           // re-initializes LISA, which re-applies the TTLC setup
+    } else {
+      await this.lisa.ensureDebugger();
+      await this.lisa.ttlcHalt();
+      await this.lisa.setup(this.flashBase);
+      await this.lisa.programFlash(bytes, base, onProgress);
+      await this.initLisa();
+    }
+    this._changed();
+  }
+
+  async ttlcSim(on) {
+    await this.lisa.sideband(on ? 'ttlc.start()' : 'ttlc.stop()');
+    this.ttlc.sim = on;
+    this._changed();
+  }
+  // `value` is a BigInt: bit i = TTLC input i (address 48 + i).
+  async ttlcSetInputs(value) { await this.lisa.sideband(`ttlc.set_inputs(0x${value.toString(16)})`); }
+  async ttlcOutputs() { const { r } = await this.lisa.sideband('ttlc.outputs()'); return BigInt('0x' + (r.outputs || '0')); }
+
+  async ttlcRun(inputs) {
+    if (!this.ttlc.sim) await this.ttlcSim(true);
+    if (inputs !== undefined) await this.ttlcSetInputs(inputs);
+    this.lisa.ttlcStack = [];
+    await this._debuggerOp(() => this.lisa.ttlcRun());
+  }
+  async ttlcScan(nopos) { return this._debuggerOp(async () => { const r = await this.lisa.ttlcScan(nopos); return { ...r, ...(await this.ttlcStatus()) }; }); }
+  async ttlcHalt()   { return this._debuggerOp(async () => { await this.lisa.ttlcHalt(); return this.ttlcStatus(); }); }
+  async ttlcStep()   { return this._debuggerOp(async () => { const st = await this.lisa.ttlcStep(); return { ...(await this.ttlcStatus()), ...st }; }); }
+  async ttlcRestart(inputs) { await this.initLisa(); await this.ttlcRun(inputs); }
+
+  // Status plus a window of code around PC (the PC is only meaningful while halted).
+  async ttlcStatus() {
+    return this._debuggerOp(async () => {
+      const st = await this.lisa.ttlcStatus();
+      if (!st.run) {
+        const start = Math.max(0, st.pc - 3);
+        st.code = { start, words: await this.lisa.ttlcReadProgram(start, 8) };
+      }
+      return st;
+    });
   }
 
   async verifyViaLisa(bytes, base, onProgress) {
@@ -1268,6 +1545,7 @@ class LisaCommander {
   // Raw bytes typed into the console.
   async consoleSend(data) {
     if (!this.lisa || this.board.mode !== 'pass') throw new Error('not connected to LISA');
+    await this.lisa.idle();
     await this.lisa.send(data);
   }
 }
@@ -1275,7 +1553,7 @@ class LisaCommander {
 const fmtHz = hz => !hz ? 'stopped' : hz >= 1e6 ? (hz / 1e6).toFixed(hz % 1e6 ? 2 : 0) + ' MHz'
   : hz >= 1e3 ? (hz / 1e3).toFixed(1) + ' kHz' : hz + ' Hz';
 
-root.LisaCore = { LisaCommander, LisaDebug, MpBoard, SerialLink, RxBuffer, parseFirmware, toWords, disassemble, disassembleWindow, hex2, hex4, hex6, fmtHz, T, CODE };
+root.LisaCore = { LisaCommander, LisaDebug, MpBoard, SerialLink, RxBuffer, parseFirmware, toWords, disassemble, disassembleWindow, ttlcDisassemble, hex2, hex4, hex6, fmtHz, T, CODE };
 
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
@@ -1285,7 +1563,7 @@ root.LisaCore = { LisaCommander, LisaDebug, MpBoard, SerialLink, RxBuffer, parse
 /* ====================================================================
    UI glue: DOM, the console terminal, buttons.
    ==================================================================== */
-const { LisaCommander, parseFirmware, disassembleWindow, hex2, hex4, hex6, fmtHz } = window.LisaCore;
+const { LisaCommander, parseFirmware, disassembleWindow, ttlcDisassemble, hex2, hex4, hex6, fmtHz } = window.LisaCore;
 const $ = id => document.getElementById(id);
 const enc = new TextEncoder();
 
@@ -1411,6 +1689,7 @@ function setStatus(text, cls) { const el = $('status'); el.textContent = text; e
 function renderState(st) {
   st = st || cmdr.state();
   if (!st.connected || st.halted === false) $('disasm').textContent = '';
+  if (!st.connected) { showTtlc(null); renderOutputs(0n); }
   const on = st.connected && st.pass && !busy;
   ['btnProgram', 'btnVerify', 'btnRun', 'btnHalt', 'btnResume', 'btnStep', 'btnReset', 'btnRegs', 'btnStack',
    'btnGrant', 'btnReclaim', 'btnReinit'].forEach(id => $(id).disabled = !on);
@@ -1430,6 +1709,13 @@ function renderState(st) {
   $('kvClock').textContent = i.clock !== undefined ? fmtHz(i.clock) : '—';
   $('kvFlash').textContent = i.flashId ? `JEDEC ID ${i.flashId}` + (i.flashId.startsWith('ef') ? ' (Winbond)' : '') : '—';
   $('kvDbg').textContent = i.debugger || '—';
+  // TTLC panel
+  const t = st.ttlc || {};
+  const tag = $('tagTtlc');
+  tag.textContent = !st.connected ? 'off' : !t.enabled ? 'not set up' : 'base 0x' + hex6(t.base) + (t.sim ? ', I/O emulated' : '');
+  tag.className = 'tag' + (st.connected && t.enabled ? ' lisa' : '');
+  $('btnTtlcProgram').disabled = !on;
+  ['btnTtlcRun', 'btnTtlcHalt', 'btnTtlcStep', 'btnTtlcScan', 'btnTtlcRestart'].forEach(id => $(id).disabled = !on || !t.enabled);
   if (busy) setStatus(busyLabel, 'busy');
   else if (st.connected) setStatus(st.pass ? 'Connected' : 'Connected (REPL)', 'ok');
   else setStatus('Disconnected');
@@ -1446,7 +1732,10 @@ function setBusy(on, label) {
 async function guarded(label, fn) {
   if (busy) return;
   setBusy(true, label);
-  try { return await fn(); }
+  try {
+    if (cmdr.lisa) await cmdr.lisa.idle();      // let a running I/O poll finish first
+    return await fn();
+  }
   catch (e) { log(String(e.message || e), 'err'); }
   finally { setBusy(false); }
 }
@@ -1514,6 +1803,134 @@ function progress(done, total, what) {
   $('progBar').style.width = total ? (100 * done / total).toFixed(1) + '%' : '0';
   $('progText').textContent = total ? `${what}: ${done} / ${total}` : '';
 }
+
+/* ---------------- TTLC panel ---------------- */
+
+const TTLC_LABELS = { 'ttlc_loopback.hex': 'I/O loopback: every scan copies inputs 0–47 to outputs 0–47',
+                      'elevator_ctrl.hex': 'Elevator control example (elevator_ctrl.asm)' };
+const ttlcSel = $('ttlcSel');
+for (const name of Object.keys(window.LISA_ASSETS.ttlc_firmware || {})) {
+  const o = document.createElement('option');
+  o.value = name; o.textContent = TTLC_LABELS[name] || name;
+  ttlcSel.appendChild(o);
+}
+{ const o = document.createElement('option'); o.value = '__file'; o.textContent = 'Custom file…'; ttlcSel.appendChild(o); }
+if (window.LISA_ASSETS.ttlc_firmware && window.LISA_ASSETS.ttlc_firmware['ttlc_loopback.hex']) ttlcSel.value = 'ttlc_loopback.hex';
+let currentTtlcFw = null;
+
+function selectTtlcFirmware() {
+  const v = ttlcSel.value;
+  $('ttlcFileRow').style.display = v === '__file' ? '' : 'none';
+  currentTtlcFw = null;
+  if (v !== '__file') {
+    try { currentTtlcFw = parseFirmware(v, enc.encode(window.LISA_ASSETS.ttlc_firmware[v])); }
+    catch (e) { log(String(e.message || e), 'err'); }
+  } else if ($('ttlcFile').files[0]) {
+    $('ttlcFile').files[0].arrayBuffer().then(buf => {
+      currentTtlcFw = parseFirmware($('ttlcFile').files[0].name, buf);
+      $('ttlcInfo').textContent = describeTtlcFw(currentTtlcFw);
+    }).catch(e => { currentTtlcFw = null; $('ttlcInfo').textContent = '—'; log(String(e.message || e), 'err'); });
+    return;
+  }
+  $('ttlcInfo').textContent = describeTtlcFw(currentTtlcFw);
+}
+const describeTtlcFw = fw => fw ? `${fw.name}: ${fw.words} instructions (${fw.bytes.length} bytes)` : '—';
+ttlcSel.addEventListener('change', selectTtlcFirmware);
+$('ttlcFile').addEventListener('change', selectTtlcFirmware);
+selectTtlcFirmware();
+
+function ttlcBase() {
+  const t = $('ttlcBase').value.trim();
+  if (!/^(0x)?[0-9a-f]+$/i.test(t)) throw new Error(`TTLC flash base "${t}" is not a hex number`);
+  const v = parseInt(t, 16);
+  if (v % 0x10000) throw new Error('the TTLC flash base must be a multiple of 0x10000 (64 KB)');
+  if (v >= 0x1000000) throw new Error('the TTLC flash base must be below 16 MB');
+  return v;
+}
+const ttlcClkDiv = () => +$('ttlcClk').value;
+
+// the 48 output LEDs and 48 input toggles
+let ttlcInputs = 0n;
+const outCells = [], inCells = [];
+for (let i = 0; i < 48; i++) {
+  const o = document.createElement('div'); o.className = 'cell'; o.textContent = i; o.title = `output ${i} (address ${i})`;
+  $('ttlcOut').appendChild(o); outCells.push(o);
+  const b = document.createElement('div'); b.className = 'cell inp'; b.textContent = i; b.title = `input ${i} (address ${48 + i})`;
+  b.addEventListener('click', () => { ttlcInputs ^= 1n << BigInt(i); renderInputs(); pushInputs(); });
+  $('ttlcIn').appendChild(b); inCells.push(b);
+}
+function renderInputs() { inCells.forEach((c, i) => c.classList.toggle('on', !!((ttlcInputs >> BigInt(i)) & 1n))); }
+function renderOutputs(v) { outCells.forEach((c, i) => c.classList.toggle('on', !!((v >> BigInt(i)) & 1n))); }
+$('ttlcInClear').addEventListener('click', e => { e.preventDefault(); ttlcInputs = 0n; renderInputs(); pushInputs(); });
+
+// send the inputs to the emulator; coalesces rapid clicks
+let inputsSending = false, inputsDirty = false;
+async function pushInputs() {
+  if (!cmdr.connected || !cmdr.state().ttlc.sim) return;
+  if (inputsSending) { inputsDirty = true; return; }
+  inputsSending = true;
+  try {
+    do { inputsDirty = false; await cmdr.lisa.idle(); await cmdr.ttlcSetInputs(ttlcInputs); } while (inputsDirty);
+  } catch (e) { log(String(e.message || e), 'err'); }
+  finally { inputsSending = false; }
+}
+
+function showTtlc(st) {
+  if (!st) { $('ttlcState').textContent = '—'; $('ttlcDisasm').textContent = ''; return; }
+  $('ttlcState').textContent = st.run ? `running (RR ${st.rr})` : `halted at PC 0x${st.pc.toString(16).padStart(3, '0')}, RR ${st.rr}`;
+  $('ttlcDisasm').textContent = !st.code ? '' : st.code.words.map((w, i) => {
+    const a = st.code.start + i;
+    return `${a === st.pc ? '▶' : ' '} ${a.toString(16).padStart(3, '0')}: ${hex4(w)}  ${ttlcDisassemble(w)}`;
+  }).join('\n');
+}
+
+// live output refresh while the TTLC runs
+let polling = false;
+setInterval(async () => {
+  const st = cmdr.state();
+  if (busy || polling || inputsSending || !st.connected || !st.pass || !st.ttlc.enabled || !st.ttlc.sim || !$('ttlcLive').checked) return;
+  polling = true;
+  try { renderOutputs(await cmdr.ttlcOutputs()); } catch (e) { /* a transient collision; next tick */ }
+  finally { polling = false; }
+}, 250);
+
+$('btnTtlcProgram').addEventListener('click', () => {
+  if (!currentTtlcFw) { log('choose a TTLC program first', 'err'); return; }
+  const fw = currentTtlcFw, direct = $('mDirect').checked;
+  guarded('Programming TTLC…', async () => {
+    const base = ttlcBase(), clkDiv = ttlcClkDiv();
+    const t0 = performance.now();
+    progress(0, fw.words, 'TTLC');
+    log(`programming TTLC ${describeTtlcFw(fw)} at 0x${hex6(base)} ${direct ? 'directly over SPI' : 'via LISA'}…`);
+    await cmdr.programTtlc(fw.bytes, base, clkDiv, direct, (d, t) => progress(direct ? d >> 1 : d, direct ? t >> 1 : t, 'TTLC'));
+    progress(fw.words, fw.words, 'TTLC done');
+    log(`TTLC programmed in ${((performance.now() - t0) / 1000).toFixed(1)} s; starting the I/O emulator and the TTLC`, 'ok');
+    await cmdr.ttlcRun(ttlcInputs);
+    showTtlc(await cmdr.ttlcStatus());
+  });
+});
+$('btnTtlcRun').addEventListener('click', () => guarded('Starting TTLC…', async () => { await cmdr.ttlcRun(ttlcInputs); showTtlc(await cmdr.ttlcStatus()); log('TTLC running'); }));
+$('btnTtlcHalt').addEventListener('click', () => guarded('Halting TTLC…', async () => { const st = await cmdr.ttlcHalt(); showTtlc(st); log(`TTLC halted at PC 0x${st.pc.toString(16).padStart(3, '0')}`); renderOutputs(await cmdr.ttlcOutputs()); }));
+const h3 = v => '0x' + v.toString(16).padStart(3, '0');
+$('btnTtlcStep').addEventListener('click', () => guarded('Stepping TTLC…', async () => {
+  const st = await cmdr.ttlcStep(); showTtlc(st);
+  if (st.completed) log(`TTLC step: ${ttlcDisassemble(st.op).replace(/\s+/g, ' ')} at ${h3(st.fromPC)} → stopped at ${h3(st.newPC)}` +
+    (st.targets.includes(st.newPC) ? '' : ` (the instruction at ${st.targets.map(h3).join('/')} ran too: it was already cached)`), 'dim');
+  else log(`TTLC step: did not reach ${st.targets.map(h3).join(' / ')} within 0.5 s; halted at ${h3(st.newPC)}`, 'err');
+  renderOutputs(await cmdr.ttlcOutputs());
+}));
+$('btnTtlcScan').addEventListener('click', () => guarded('Running one scan…', async () => {
+  if (!currentTtlcFw) throw new Error('choose the TTLC program that is loaded, so its nopo addresses are known');
+  const words = globalThis.LisaCore.toWords(currentTtlcFw.bytes);
+  const nopos = []; words.forEach((w, a) => { if ((w & 0xf) === 0) nopos.push(a); });
+  const st = await cmdr.ttlcScan(nopos); showTtlc(st);
+  log(st.completed ? `one scan done; TTLC stopped at ${h3(st.newPC)}` : `no nopo reached within 2 s; halted at ${h3(st.newPC)}`, st.completed ? 'dim' : 'err');
+  renderOutputs(await cmdr.ttlcOutputs());
+}));
+$('btnTtlcRestart').addEventListener('click', () => guarded('Restarting TTLC…', async () => { await cmdr.ttlcRestart(ttlcInputs); showTtlc(await cmdr.ttlcStatus()); log('chip reset; TTLC running from address 0'); }));
+$('ttlcClk').addEventListener('change', () => guarded('Setting shift clock…', async () => {
+  if (cmdr.state().ttlc.enabled) await cmdr.enableTtlc(cmdr.ttlc.base, ttlcClkDiv());
+}));
 
 /* ---------------- actions ---------------- */
 

@@ -16,7 +16,9 @@ Everything lives in this directory:
 | `web/build_assets.py` | regenerates `assets.js` after editing `board/` or `firmware/` |
 | `board/uartPass.py` | USB ↔ LISA-debug-UART pass-through, installed on the board's filesystem |
 | `board/lisa_flash.py` | project select/reset and direct SPI-flash programming; sent to the board's RAM on connect |
+| `board/ttlc_sim.py` | PIO + DMA emulation of the TTLC's 74HC595/74HC166 I/O chains; sent to RAM on connect |
 | `firmware/bringup_tt07`, `bringup_tt06` | the bring-up demo (prints a banner on `?`), one hex opcode per line |
+| `firmware/ttlc/` | TTLC programs: `ttlc_loopback.asm` (inputs → outputs) and the `elevator_ctrl.asm` example, with their `.hex` from `mc14500_as.py` |
 | `test/` | hardware regression test of the app's protocol code (Node + a small serial bridge) |
 
 ## Using it
@@ -58,6 +60,31 @@ a dump of the 128-byte data RAM with SP marked. **Verify** reads the flash back
 image. Step and the RAM dump work around two properties of the TT07 silicon,
 see below.
 
+### TTLC (the MC14500B logic controller)
+
+The TTLC runs its own program from the flash (16-bit words at `{reg 0x1f, 8'h0} |
+pc << 1`; `inst[3:0]` opcode, `inst[15:4]` address — what `mc14500_as.py`
+emits) and talks to the outside world through 48 outputs and 48 inputs on three
+74HC595 / 74HC166 chains: three data lines each way, a shift clock and a latch,
+all on `uo_out` / `ui_in` once debug register 0x1b routes them there
+(`uo_out[0..2]` data out, `[5]` latch, `[6]` shift clock, `[3]` ttlc_reset;
+`ui_in[6:4]` data in). On the demo board those are RP2040 pins, so
+`ttlc_sim.py` plays the chains with two PIO state machines and two DMA ring
+buffers: the outputs are always available in RAM, the inputs are replayed on
+every scan, and the CPU is never involved. It is driven in-band through the
+pass-through (`uartPass.py` 2.1's NUL-framed sideband), so the LISA console
+keeps working meanwhile.
+
+The panel programs a TTLC image at its own flash base (default 0x010000, 64 KB
+aligned, with either programming method), sets registers 0x1f / 0x1b / 0x1c
+(shift-clock divider; `clk/32` by default), invalidates the TTLC instruction
+cache, and leaves the TTLC halted at PC 0 (the chip is reset: the TTLC PC is
+not writable). **Run / Halt / Restart**, **Step**, **Scan** (run until the next
+`nopo`, i.e. one PLC cycle — the reliable stepping unit, see below), a code
+window with a MC14500B disassembly, 48 output LEDs refreshed live and 48 input
+toggles. I/O addresses: 0–47 outputs, 48–95 inputs, 96–127 storage (96–103 are
+also the port to LISA, 104 the LISA interrupt), 128–135 from LISA, 136 = RR.
+
 ### The UART console
 
 The console is the pass-through to LISA's debug UART, so it is either talking to
@@ -96,6 +123,19 @@ TT07 board:
   register increments PC afterwards (`dbg_inc`: it is meant for loading code),
   which looks like "stepping" if you poll it. The app never touches 0xf; the
   opcode shown is read from the flash at `2 × PC`.
+* **The TTLC input scan shifts 17 times** (`shift_reg_io.v`: the input shift
+  condition fires once more after the last falling edge, when `last_clk` only
+  suppresses the clock toggle). The TTLC keeps the last 16 samples, so real
+  74HC166 chains — which hold their last bit — would make every input read one
+  position too high. The emulator compensates by presenting bit 15 after the
+  first falling edge and leaving bit 0 on the lines for that 17th sample.
+* **The TTLC step bit cannot work** (`ttlc_halt = !run | step` blocks the fetch
+  whose `ttlc_i_ready` would clear `step`), and **its breakpoints stop one
+  instruction late** when the next instruction is already in the single 4-word
+  instruction cache: the compare runs a clock behind the fetch, and the
+  instruction executed in that clock loses its PC effect if it is a
+  `jmp`/`rtn`/`nopf`. Step therefore reports where the TTLC really stopped;
+  Scan is exact because a `nopo` stalls the core until its I/O scan is done.
 
 ### Flash base (Advanced)
 
@@ -176,7 +216,10 @@ node test/hw_test.mjs            # connect, direct, vialisa, verify, debug, disc
 It programs an altered demo directly (banner ends in `LISA*`), the original via
 LISA (`LISA!`), verifies both ways, and exercises halt, a dozen single steps
 checked against the image's decode, RAM read-back, reset/resume, the `+++`
-hand-back and reconnecting. It overwrites the first sectors of the flash.
+hand-back and reconnecting; the `ttlc` scenario programs the loopback at
+0x10000 and the elevator example (via LISA) at 0x20000, checks the 48-bit
+loopback for several patterns, Step, Scan, and that LISA's console still works
+while the TTLC scans. It overwrites the first three 64 KB blocks of the flash.
 
 ## Publishing
 
