@@ -88,7 +88,7 @@ also the port to LISA, 104 the LISA interrupt), 128–135 from LISA, 136 = RR.
 
 **Timing.** The TTLC has no timer and only 32 storage bits, so a PLC program
 takes its clock from the I/O rack: the emulator toggles **input 47** every N ms
-(the field next to the input grid, default 500 ms, 0 = off) and programs
+(the field next to the input grid, default 2000 ms, 0 = off) and programs
 edge-detect it.
 
 **The elevator controller** (`elevator6x2.asm`, 531 instructions) runs two
