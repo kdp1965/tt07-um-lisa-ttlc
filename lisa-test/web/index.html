@@ -1039,9 +1039,34 @@ function toWords(bytes) {
   return words;
 }
 
-// Accepts: one 4-digit hex opcode per line (lisa_pydb / linker output),
-// Verilog-hex style "@addr" plus 2-digit hex bytes (the testbench format),
-// or a raw binary.  Returns little-endian words as bytes, padded to 16 bits.
+// Intel HEX (sdcc -mlisa output; record addresses are byte addresses, i.e.
+// 2 x PC, exactly the flash layout).  Fills mem and returns the record count.
+function parseIntelHex(name, text, set) {
+  let records = 0, base = 0, eof = false;
+  for (let [n, raw] of text.split('\n').entries()) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (eof) throw new Error(`${name}: data after the end-of-file record (line ${n + 1})`);
+    if (line[0] !== ':' || !/^:[0-9a-f]+$/i.test(line) || line.length < 11 || line.length % 2 === 0)
+      throw new Error(`${name}: line ${n + 1} is not an Intel HEX record`);
+    const b = [];
+    for (let i = 1; i < line.length; i += 2) b.push(parseInt(line.substr(i, 2), 16));
+    const len = b[0], addr = (b[1] << 8) | b[2], type = b[3];
+    if (b.length !== len + 5) throw new Error(`${name}: line ${n + 1}: record length ${len} does not match the line`);
+    if (b.reduce((a, v) => (a + v) & 0xff, 0) !== 0) throw new Error(`${name}: line ${n + 1}: checksum error`);
+    if (type === 0) { for (let i = 0; i < len; i++) set(base + addr + i, b[4 + i]); records++; }
+    else if (type === 1) eof = true;
+    else if (type === 2) base = ((b[4] << 8) | b[5]) << 4;
+    else if (type === 4) base = ((b[4] << 8) | b[5]) << 16;
+    else if (type !== 3 && type !== 5) throw new Error(`${name}: line ${n + 1}: unsupported record type ${type}`);
+  }
+  return records;
+}
+
+// Accepts: Intel HEX (sdcc -mlisa), one 4-digit hex opcode per line
+// (lisa_pydb / linker output), Verilog-hex style "@addr" plus 2-digit hex
+// bytes (the testbench format), or a raw binary.  Returns little-endian
+// words as bytes, padded to 16 bits.
 function parseFirmware(name, data) {
   const u8 = data instanceof Uint8Array ? data : new Uint8Array(data);
   let text = true;
@@ -1056,7 +1081,12 @@ function parseFirmware(name, data) {
     const mem = new Map();
     let addr = 0, unit = 0;
     const set = (a, v) => { if (a >= 0x1000000) throw new Error('address beyond the flash'); mem.set(a, v); };
-    for (const raw of latin1(u8).split('\n')) {
+    const str = latin1(u8);
+    if (str.trimStart()[0] === ':') {
+      parseIntelHex(name, str, set);
+      unit = 3;
+    }
+    for (const raw of unit === 3 ? [] : str.split('\n')) {
       const line = raw.replace(/(\/\/|#|;).*$/, '').trim();
       if (!line) continue;
       for (const tok of line.split(/\s+/)) {
@@ -1083,7 +1113,7 @@ function parseFirmware(name, data) {
     const end = Math.max(...mem.keys()) + 1;
     bytes = new Uint8Array(end).fill(0xff);
     for (const [a, v] of mem) bytes[a] = v;
-    format = unit === 2 ? 'opcodes' : 'hex bytes';
+    format = unit === 3 ? 'Intel HEX' : unit === 2 ? 'opcodes' : 'hex bytes';
   }
   if (bytes.length & 1) { const p = new Uint8Array(bytes.length + 1).fill(0xff); p.set(bytes); bytes = p; }
   if (bytes.length > 0x10000) throw new Error(`${name}: ${bytes.length} bytes, but LISA's program space is 64 KB (32K opcodes)`);
@@ -1788,7 +1818,8 @@ async function guarded(label, fn) {
 
 /* ---------------- firmware selection ---------------- */
 
-const DEMO_LABELS = { bringup_tt07: 'Bring-up demo for TT07 (banner on "?")', bringup_tt06: 'Bring-up demo for TT06 (banner on "?")' };
+const DEMO_LABELS = { bringup_tt07: 'Bring-up demo for TT07 (banner on "?")', bringup_tt06: 'Bring-up demo for TT06 (banner on "?")',
+                      'sdcc_hello.ihx': 'Bring-up demo in C, sdcc -mlisa (banner on "?", count/sum on "s")' };
 const fwSel = $('fwSel');
 for (const name of Object.keys(window.LISA_ASSETS.firmware)) {
   const o = document.createElement('option');

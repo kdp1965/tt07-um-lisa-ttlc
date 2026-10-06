@@ -5,9 +5,13 @@
 //   node hw_test.mjs                             # all scenarios
 //   node hw_test.mjs connect debug disconnect    # some of them
 //
-// Scenarios: connect, direct, vialisa, verify, debug, ttlc, tick, elevator, disconnect.  "direct"
+// Scenarios: connect, direct, vialisa, verify, debug, sdcc, ttlc, tick, elevator, disconnect.  "direct"
 // and "vialisa" program the bring-up demo (an altered copy, then the
 // original) into the flash at address 0 - the flash contents are replaced.
+// "sdcc" programs firmware/sdcc_hello.ihx (C, sdcc -mlisa).  "ihx=<file>"
+// programs any Intel HEX file, runs it and waits for it to print
+// "ALL PASSED" or "SOME FAILED" (the lisa-tools/sdcc_test programs), e.g.
+//   node hw_test.mjs connect ihx=../../../lisa-tools/sdcc_test/test_core.ihx disconnect
 import fs from 'node:fs';
 import net from 'node:net';
 import vm from 'node:vm';
@@ -90,6 +94,35 @@ try {
       await cmdr.consoleSend(new TextEncoder().encode('?'));
       const out = await waitConsole(/Hello from TT07 LISA./);
       check(/Hello from TT07 LISA!/.test(out), 'banner after via-LISA programming says LISA! (original image)');
+    } else if (sc === 'sdcc') {
+      const demo = parseFirmware('sdcc_hello.ihx', new TextEncoder().encode(globalThis.LISA_ASSETS.firmware['sdcc_hello.ihx']));
+      check(demo.format === 'Intel HEX' && demo.words > 1000, `sdcc_hello.ihx parsed as Intel HEX: ${demo.words} words`);
+      const t = Date.now();
+      await cmdr.programDirect(demo.bytes, 0, (d, n) => { if (d === n) log(`progress ${d}/${n}`); });
+      log(`direct programming took ${(Date.now() - t) / 1000} s`);
+      consoleBuf = '';
+      await cmdr.run();
+      await waitConsole(/sdcc_hello ready/, 4000);
+      check(true, 'C firmware printed its reset banner');
+      await cmdr.consoleSend(new TextEncoder().encode('?'));
+      await waitConsole(/compiled by sdcc -mlisa/, 4000);
+      check(/jgs/.test(consoleBuf), 'owl banner from the C firmware');
+      await cmdr.consoleSend(new TextEncoder().encode('s'));
+      const out = await waitConsole(/Count: \d+ sum: \d+/, 4000);
+      const m = out.match(/Count: (\d+) sum: (\d+)/);
+      check(+m[2] === '?'.charCodeAt(0) + 's'.charCodeAt(0), `printf %u works on the chip: ${m[0]} (sum of '?' and 's')`);
+    } else if (sc.startsWith('ihx=')) {
+      const file = sc.slice(4);
+      const prog = parseFirmware(path.basename(file), fs.readFileSync(file));
+      check(prog.format === 'Intel HEX', `${file}: ${prog.words} words`);
+      const t = Date.now();
+      await cmdr.programDirect(prog.bytes, 0, (d, n) => { if (d === n) log(`progress ${d}/${n}`); });
+      log(`direct programming took ${(Date.now() - t) / 1000} s`);
+      consoleBuf = '';
+      await cmdr.run();
+      const out = await waitConsole(/ALL PASSED|SOME FAILED/, 20000);
+      console.log(out.replace(/\r/g, ''));
+      check(/ALL PASSED/.test(out), `${path.basename(file)} reports ALL PASSED on the chip`);
     } else if (sc === 'verify') {
       let t = Date.now();
       let bad = await cmdr.verifyViaLisa(fw.bytes, 0);

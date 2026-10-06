@@ -1,0 +1,9 @@
+-muwx
+-i sdcc_hello.ihx
+-b HOME = 0x0000
+-k /Users/Ken2/projects/lisa/lisa-tools/sdcc-lisa/build/src/../share/sdcc/lib/lisa
+-k /usr/local/share/sdcc/lib/lisa
+-l lisa
+sdcc_hello.rel
+
+-e
