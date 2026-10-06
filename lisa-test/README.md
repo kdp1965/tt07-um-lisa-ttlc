@@ -190,6 +190,15 @@ TT07 board:
   instruction executed in that clock loses its PC effect if it is a
   `jmp`/`rtn`/`nopf`. Step therefore reports where the TTLC really stopped;
   Scan is exact because a `nopo` stalls the core until its I/O scan is done.
+* **Interrupts cannot be used with compiled code.** The core samples an
+  interrupt in the cycle that executes an `if`/`ifte`/`iftt` or the first
+  word of an `ldx`, saving neither the predicate nor the pending literal:
+  after `rets` the predicated instruction runs unconditionally, and the
+  `ldx` gets the vector word with its literal executed as an opcode later.
+  `lisa-tools/sdcc_test/test_irqhaz.ihx` counts both on the chip (2 and 1
+  in 20 ms with a 1 ms timer). Handlers work, but only around hand-written
+  code that avoids `if*` and `ldx` (`test_irq2.ihx`). Details and the RTL
+  fixes in `lisa_isa.md` ("TT07 interrupt notes").
 * **The ALU's carry/borrow flags are wrong in the corner cases** (found while
   running the SDCC test suite on the chip; `lisa_core.v` lines 643–652). The
   adder is `acc + acc_adder` with `acc_adder` an *8-bit* operand, and the
