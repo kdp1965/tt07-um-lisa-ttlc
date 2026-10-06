@@ -330,7 +330,8 @@
       <h2>Elevator — 6 floors, 2 cars <span class="spacer"></span><span class="tag" id="elevTag">TTLC not running</span></h2>
       <div id="elevSvg"></div>
       <div class="hint">Buttons are momentary: they are pressed while you hold them. The indicators (and the cars) come from the TTLC's outputs,
-        refreshed live while it runs with the tick on. Hall calls on the left, each car's cabin panel beside its shaft.</div>
+        refreshed live while it runs with the tick on. Hall calls on the left, each car's cabin panel beside its shaft.
+        Floors are 1–6 here; the program and the I/O grid count them 0–5.</div>
     </div>
   </section>
 </main>
@@ -2009,11 +2010,11 @@ function buildElevatorView(container) {
   for (let f = 0; f < FLOORS; f++) {
     const y = floorY(f);
     svg.appendChild(el('line', { x1: 20, y1: y + FH - 1, x2: 620, y2: y + FH - 1, stroke: 'var(--grid)' }));
-    svg.appendChild(el('text', { x: 24, y: y + FH / 2, class: 'lbl b', 'dominant-baseline': 'central' }, `floor ${f}`));
+    svg.appendChild(el('text', { x: 24, y: y + FH / 2, class: 'lbl b', 'dominant-baseline': 'central' }, `floor ${f + 1}`));
     // hall call buttons: up on floors 0-4 (inputs 0,1,3,5,7), down on floors 1-5 (inputs 2,4,6,8,9)
     const upIn = { 0: 0, 1: 1, 2: 3, 3: 5, 4: 7 }[f], dnIn = { 1: 2, 2: 4, 3: 6, 4: 8, 5: 9 }[f];
-    if (upIn !== undefined) button(110, y + FH / 2, 11, '▲', upIn, `floor ${f}: call going up (input ${upIn})`);
-    if (dnIn !== undefined) button(142, y + FH / 2, 11, '▼', dnIn, `floor ${f}: call going down (input ${dnIn})`);
+    if (upIn !== undefined) button(110, y + FH / 2, 11, '▲', upIn, `floor ${f + 1}: call going up (input ${upIn})`);
+    if (dnIn !== undefined) button(142, y + FH / 2, 11, '▼', dnIn, `floor ${f + 1}: call going down (input ${dnIn})`);
   }
   svg.appendChild(el('text', { x: 126, y: 14, class: 'lbl', 'text-anchor': 'middle' }, 'hall calls'));
 
@@ -2040,7 +2041,7 @@ function buildElevatorView(container) {
     svg.appendChild(el('text', { x: px + 38, y: TOP + 10, class: 'lbl', 'text-anchor': 'middle' }, `cabin ${c + 1}`));
     for (let f = 0; f < FLOORS; f++) {
       const n = (c === 0 ? 10 : 16) + f;
-      button(px + 18 + (f % 2) * 40, TOP + 150 - Math.floor(f / 2) * 44, 14, String(f), n, `car ${c + 1} cabin: floor ${f} (input ${n})`);
+      button(px + 18 + (f % 2) * 40, TOP + 150 - Math.floor(f / 2) * 44, 14, String(f + 1), n, `car ${c + 1} cabin: floor ${f + 1} (input ${n})`);
     }
     cars.push({ car, doorL, doorR, lampUp, lampDn, cx, floor: -1 });
   }

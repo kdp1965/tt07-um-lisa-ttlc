@@ -103,7 +103,7 @@ pending request, continuing in its direction while something is ahead. A new
 hall call is dispatched to one car: the car already at that floor, else an idle
 car (the one within two floors when both are idle), else car 1; a car stopping
 at a floor clears every call there. When this program is selected, a picture of the
-building appears in the right column: six floors, both shafts with the cars
+building appears in the right column (floors numbered 1–6 there): six floors, both shafts with the cars
 gliding between floors (doors open on dwell, direction lamps), hall-call
 buttons per floor and a cabin panel per car — all momentary buttons, lit from
 the TTLC's indicator outputs. Press a hall call, watch both cars go; the first
