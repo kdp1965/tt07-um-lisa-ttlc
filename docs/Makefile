@@ -1,7 +1,7 @@
 SRCS = $(wildcard *.txt)
 PNGS = $(SRCS:.txt=.png)
 
-ASCEE = ../../../ascee/ascee
+ASCEE = ../../../../ascee/ascee
 
 all: $(PNGS)
 

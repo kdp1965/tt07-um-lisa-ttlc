@@ -14,6 +14,6 @@
   |          | .operation.                    |                     
   |   [15:10]+--------------------------------+                       
   +----------+                                                        
-              <h3>Figure 974.7: Indexed Addressing Diagram</h3>              
+              <h3>Figure 846.7: Indexed Addressing Diagram</h3>              
                                                                       
 {:FILE scale 0.9 theme light font-size 10}

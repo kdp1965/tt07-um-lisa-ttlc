@@ -195,7 +195,8 @@ TT07 board:
   adder is `acc + acc_adder` with `acc_adder` an *8-bit* operand, and the
   carry-in is folded into that operand instead of being a real carry-in, so it
   is lost when the operand wraps:
-  * `add M` adds without C at all (the ISA doc says it includes C; it does not);
+  * `add M` adds without C — that one is by design (`adc` is the carry form);
+    the ISA doc used to say `+C` and has been corrected;
   * `adc #k` adds `(k + C) & 0xff`: `adc #0xff` with C = 1 adds 0 and clears C;
   * `sub M` adds `~((M + C) & 0xff) + 1` (8 bits): `sub M` with M = 0, C = 0
     computes A + 0 and reports a borrow (C = 1), and `cmp M` with M = 0 reports

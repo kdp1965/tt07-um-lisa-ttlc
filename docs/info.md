@@ -1,10 +1,12 @@
-## What is LISA?
+## What is LISA with TTLC?
 
 LISA is a Microcontroller built around a custom 8-Bit Little ISA (LISA)
 microprocessor core.  It includes several standard peripherals that
 would be found on commercial microcontrollers including timers, GPIO,
-UARTs and I2C.
-The following is a block diagram of the LISA Microcontroller:
+UARTs and I2C. TTLC is a Programmable Logic Controller for Tiny Tapeout
+(TTLC) build around a functional equivalent of a Motorola mc1500b system
+controller.
+The following is a block diagram of the design:
 
 ![](block_diag.png)
 
@@ -13,8 +15,10 @@ The following is a block diagram of the LISA Microcontroller:
       - Stack Pointer and Index Register (Indexed DATA RAM access)
       - 8-bit Accumulator + 16-bit BF16 Accumulator and 4 BF16 registers
 
+
 ### Deailed list of the features
    - Harvard architecture LISA Core (16-bit instruction, 15-bit address space)
+   - Motorola MC14500B System Controller with PC, Stack, I/O and stroage
    - Debug interface
       * UART controlled
       * Auto detects port from one of 3 interfaces
@@ -24,9 +28,9 @@ The following is a block diagram of the LISA Microcontroller:
       * Read/write LISA core registers and peripherals
       * Set LISA breakpoints, halt, resume, single step, etc.
       * SPI/QSPI programmability (single/quad, port location, CE selects)
-   - (Q)SPI Arbiter with 3 access channels
+   - (Q)SPI Arbiter with 4 access channels
       * Debug interface for direct memory access
-      * Instruction fetch
+      * Instruction fetch (LISA and MC14500B)
       * Data fetch
       * Quad or Single SPI.  Hereafter called QSPI, but supports either.
    - Onboard 128 Byte RAM for DATA / DATA CACHE
@@ -41,19 +45,19 @@ The following is a block diagram of the LISA Microcontroller:
    - I2C Master controller
    - Hardware 8x8 integer multiplier
    - Hardware 16/8 or 16/16 integer divider
-   - Hardware Brain Float 16 (BF16) Multiply/Add/Negate/Int16-to-BF16
+   - Hardware Brain Float 16 (BF16) Multiply/Divide/Add/Negate/ItoF/FtoI
    - Programmable I/O mux for maximum flexibility of I/O usage.
+   - TTLC 48-Outputs plus 48-Inputs via external 74HC595 / 74HC166 chips
+   - TTLC 32-Bit internal storage plus 16 bit I/O to LISA (8 each direction)
 
-It uses a 32x32 1RW [DFFRAM](https://github.com/AUCOHL/DFFRAM) macro to implement a 128 bytes (1 kilobit) RAM module.
-The 128 Byte ram can be used either as a DATA cache for the processor data bus, giving a 32K Byte address range,
+A 32x32 1RW [DFFRAM](https://github.com/AUCOHL/DFFRAM) macro implements a 128 byte RAM module.
+The RAM can be used either as a DATA cache for the processor, giving a 32K Byte address range,
 or the CACHE controller can be disabled, connecting the Lisa processor core to the RAM directly, limiting the 
-data space to 128 bytes.  Inclusion of the DFFRAM is thanks to Uri Shaked (Discord urish) and his DFFRAM example.
-
-Reseting the project **does not** reset the RAM contents.
+data space to 128 bytes.
 
 ## Connectivity
 
-All communication with the microcontroller is done through a UART connected to the Debug Controller.  The UART
+All communication with the design is done through a UART connected to the Debug Controller.  The UART
 I/O pins are auto-detected by the debug_autobaud module from the following choices (RX/TX):
 
     ui_in[3]  / ui_out[4]     RP2040 UART interface   
@@ -83,7 +87,7 @@ The Debug interface uses a fixed, Verilog coded Finite State Machine (FSM) that 
 the UART to interface with the microcontroller.  These commands are simple ASCII format such that low-level testing
 can be performed using any standard terminal software (such as minicom, tio. Putty, etc.).  The 'r' and 'w' commands must be
 terminated using a NEWLINE (0x0A) with an optional CR (0x0D).  Responses from the debug interface are always 
-terminated with a LINFEED plus CR sequence (0x0A, 0x0D).  The commands are as follows (responsce LF/CR ommited):
+terminated with a LINFEED plus CR sequence (0x0A, 0x0D).  All HEX values must be lower case.
 
  | Command   | Description                                                          |
  | --------- | -------------------------------------------------------------------- |
@@ -94,37 +98,39 @@ terminated with a LINFEED plus CR sequence (0x0A, 0x0D).  The commands are as fo
  | l         | Grant LISA the UART.  Further data will be ignored by the debugger.  |
  | +++       | Revoke LISA UART.  NOTE: a 0.5s guard time before/after is required. |
 
-NOTE: All HEX values must be a-f and not A-F.  Uppercase is not supported.
-
 ### Debug Configuration and Control Registers
 
 The following table describes the configuration and LISA debug register addresses available via the debug 'r' and 'w'
 commands.  The individual register details will be described in the sections to follow.
 
- | ADDR | Description                | ADDR | Description                  |
- | ---- | -------------------------- | ---- | ---------------------------- |
- | 0x00 | LISA Core Run Control      | 0x12 | LISA1 QSPI base address      |
- | 0x01 | LISA Accumulator / FLAGS   | 0x13 | LISA2 QSPI base address      |
- | 0x02 | LISA Program Counter (PC)  | 0x14 | LISA1 QSPI CE select         |
- | 0x03 | LISA Stack Pointer (SP)    | 0x15 | LISA2 QSPI CE select         |
- | 0x04 | LISA Return Address (RA)   | 0x16 | Debug QSPI CE select         |
- | 0x05 | LISA Index Register (IX)   | 0x17 | QSPI Mode (QUAD, flash, 16b) |
- | 0x06 | LISA Data bus              | 0x18 | QSPI Dummy read cycles       |
- | 0x07 | LISA Data bus address      | 0x19 | QSPI Write CMD value         |
- | 0x08 | LISA Breakpoint 1          | 0x1a | The '+++' guard time count   |
- | 0x09 | LISA Breakpoint 2          | 0x1b | Mux bits for uo_out          |
- | 0x0a | LISA Breakpoint 3          | 0x1c | Mux bits for uio             |
- | 0x0b | LISA Breakpoint 4          | 0x1d | CACHE control                |
- | 0x0c | LISA Breakpoint 5          | 0x1e | QSPI edge / SCLK speed       |
- | 0x0d | LISA Breakpoint 6          | 0x20 | Debug QSPI Read / Write      |
- | 0x0f | LISA Current Opcode Value  | 0x21 | Debug QSPI custom command    |
- | 0x10 | Debug QSPI Address (LSB16) | 0x22 | Debug read SPI status reg    |
- | 0x11 | Debug QSPI Address (MSB8)  |      |                              |
+ | ADDR | Description                  | ADDR | Description                  |
+ | ---- | --------------------------   | ---- | ---------------------------- | 
+ | 0x00 | LISA Core Run Control        | 0x17 | QSPI Mode (QUAD, flash, 16b) | 
+ | 0x01 | LISA Accumulator / FLAGS     | 0x18 | QSPI Dummy read cycles       | 
+ | 0x02 | LISA Program Counter (PC)    | 0x19 | QSPI Write CMD value         | 
+ | 0x03 | LISA Stack Pointer (SP)      | 0x1a | The '+++' guard time count   | 
+ | 0x04 | LISA Return Address (RA)     | 0x1b | Mux bits for uo_out          | 
+ | 0x05 | LISA Index Register (IX)     | 0x1c | Mux bits for uio             | 
+ | 0x06 | LISA Data bus                | 0x1d | CACHE control                | 
+ | 0x07 | LISA Data bus address        | 0x1e | QSPI edge / SCLK speed       | 
+ | 0x08 | LISA Breakpoint 1            | 0x1f | MC14500b Base Address        | 
+ | 0x09 | LISA Breakpoint 2            | 0x20 | Debug QSPI Read / Write      | 
+ | 0x0a | LISA Breakpoint 3            | 0x21 | Debug QSPI custom command    | 
+ | 0x0b | LISA Breakpoint 4            | 0x22 | Debug read SPI status reg    | 
+ | 0x0c | LISA Breakpoint 5            | 0x30 | Floating point reg f0        | 
+ | 0x0d | LISA Breakpoint 6            | 0x31 | Floating point reg f1        | 
+ | 0x0f | LISA Current Opcode Value    | 0x32 | Floating point reg f2        | 
+ | 0x10 | Debug QSPI Address (LSB16)   | 0x33 | Floating point reg f3        | 
+ | 0x11 | Debug QSPI Address (MSB8)    | 0x34 | Floating point reg facc      | 
+ | 0x12 | LISA1 QSPI base address      | 0x40 | MC14500B Run Control         | 
+ | 0x13 | LISA2 QSPI base address      | 0x41 | MC14500B Program Counter     | 
+ | 0x14 | LISA1 QSPI CE select         | 0x48 | MC14500B Breakpoint 1        | 
+ | 0x15 | LISA2 QSPI CE select         | 0x49 | MC14500B Breakpoint 2        | 
+ | 0x16 | Debug QSPI CE select         | 0x4a | MC14500B Breakpoint 3        | 
+                                         
+### LISA Processor Interface Details                                         
 
-### LISA Processor Interface Details
-
-The LISA Core requires external memory for all Instructions and Data (well, sort of for data, the
-data CACHE can be disabled then it just uses internal DFFRAM).  To accomodate external memory,
+The LISA Core requires external memory for all Instructions and Data.  To accomodate external memory,
 the design uses a QSPI controller that is configurable as either single SPI or
 QUAD SPI, Flash or SRAM access, 16-Bit or 24-Bit addressing, and selectable Chip Enable for each
 type of access.  To achieve this, a QSPI arbiter is used to allow multiple accessors as shown in
@@ -138,6 +144,7 @@ that specify the operating mode per CE, and CE selection bits for each of the th
    - Debug Interface
    - LISA1 (Instruction fetch)
    - LISA2 (Data read/write)
+   - MC14550B (Instruction fetch)
 
 The arbiter gives priority to the Debug accesses and processes LISA1 and LISA2 requests using
 a round-robbin approach.  Each requestor provides a 24-bit address along with 16-bit data read/write.
@@ -211,12 +218,13 @@ Once the SPI/QSPI SRAM and optional FLASH have been chosen and connected, the De
 be programmed to indicate the nature of the external device(s).  This is accompilished using Debug registers 0x12 - 0x19 and
 0x1C.  To programming the proper mode, follow these steps:
 
-   1. Program the LISA1, LISA2 and Debug CE Select registers (0x14, 0x15, 0x16) indicating which CE to use.
-      -  0x14, 0x15, 0x16:  {6'h0, ce1_en, ce0_en} Active HIGH
-
-   2. Program the LISA1 and LISA2 base addresses if they use the same SRAM:
+   1. Program the LISA1, LISA2, TTLC and Debug CE Select registers (0x14, 0x15, 0x16) indicating which CE to use.
+      -  0x14, 0x16:  {14'h0, ce1_en, ce0_en} Active HIGH
+      -  0x15: {12'h0, ttlc_ce1_en, ttlc_ce0_en, lisa2_ce1_en, lisa2_ce0_en}
+   2. Program the LISA1,LISA2 and TTLC base addresses if they use the same SRAM:
       -  0x12: {LISA1_BASE, 8'h0} | {8'h0, PC}
       -  0x13: {LISA2_BASE, 8'h0} | {8'h0, DATA_ADDR}
+      -  0x1f: {TTLC_BASE, 8'h0}  | {8'h0, MC14500_ADDR}
    3. Program the mode for each Chip Enable (bits active HIGH)
       -  0x17: {10'h0, is_16b[1:0], is_flash[1:0], is_quad[1:0]}
    4. For Quad SPI, Special Mux Mode 3, or CE1, program the uio_mux mode:
@@ -247,7 +255,7 @@ NOTE: For register 0x1E (SPI Clock Div and CE Delay), there is only a single reg
       emulation indicates a delay between CE activations is likely needed, so this setting is 
       provided in case it is needed.
 
-## Architecture Details
+## LISA Architecture Details
 
 Below is a simplified block diagram of the LISA processor core.  It uses an 8-bit accumulator for most of
 its operations with the 2nd argument predominately coming from either immediate data in the instruction
@@ -333,6 +341,7 @@ Legend for operations below:
  | jal     | pc <= pc_jmp   | 0aaa_aaaa_aaaa_aaaa | Jump And Link (call).     |
  |         | ra <= pc       |                     |                           |
  | ret     | pc <= ra       | 1000_1010_0xxx_xxxx | Return                    |
+ | rets    | pc <= ia,ie<=1 | 1000_1011_01xx_xxxx | Return from ISR           |
  | reti    | pc <= ra       | 1000_11xx_iiii_iiii | Return Immediate.         |
  |         | acc <= acc_val |                     |                           |
  | br      | pc <= pc_rel   | 1011_0rrr_rrrr_rrrr | Branch Always             |
@@ -340,9 +349,9 @@ Legend for operations below:
  |         | if zero=1      |                     |                           |
  | bnz     | pc <= pc_rel   | 1010_1rrr_rrrr_rrrr | Branch if Not Zero.       |
  |         | if zero=0      |                     |                           |
- | rc      | pc <= ra       | 1000_1011_0xxx_xxxx | Return if Carry           |
+ | rc      | pc <= ra       | 1000_1011_00xx_xxxx | Return if Carry           |
  |         | if carry=1     |                     |                           |
- | rz      | pc <= ra       | 1000_1011_1xxx_xxxx | Return if Zero            |
+ | rz      | pc <= ra       | 1000_1011_10xx_xxxx | Return if Zero            |
  |         | if zero=1      |                     |                           |
  | call_ix | pc <= ix       | 1000_1010_100x_xxxx | Call indirect via IX      |
  |         | ra <= pc       |                     |                           |
@@ -408,12 +417,12 @@ The instructions that use direct addressing are:
  | adx    | IX <= IX + imm   | 1001_10ii_iiii_iiii | ADD IX + signed immediate |
  | andi   | A <= A & imm     | 1000_01xx_iiii_iiii | AND immediate with A      |
  | cpi    | Z,C <= A >= imm  | 1010_01xx_iiii_iiii | Compare A >= immediate    |
- | cpi    | Z,C <= A >= imm  | 1010_01xx_iiii_iiii | Compare A >= immediate    |
+ | ldi    | Z,C <= A         | 1000_00xx_iiii_iiii | A = imm C = 0, Z = a==imm |
 
-### Accumulator Indirect Operations
+### Accumulator Indirect / Peripheral Operations
 
 The Accumulator Indirect operations use immediate data in the instruction word to index
-indirectly into Data memory.  That memory address is then used to load, store or both
+indirectly into Data memory or peripheral space.  That memory address is then used to load, store or both
 load and store (swap) data with the accumulator.
 
 ![](lisa_indirect_acc.png)
@@ -497,6 +506,38 @@ are POPed, the SP is incremented prior to reading from RAM.
  |         | SP -= 1       |                     |                           |
  | pop_a   | A <= M[SP+1]  | 1010_0000_110x_xxxx | Load A from stack         |
  |         | SP += 1       |                     |                           |
+
+### Register and other Operations
+
+Register operations operate exclusively on internal registers, such as exchanging
+between two regs, shifting, complimenting, etc.  Also there are a few miscelanous
+opcodes for things like setting arithemetic mode, complimenting the C flag, etc.
+
+ | Opcode  | Operation     | Encoding            | Description               |
+ | ------- | ------------- | ------------------- | ------------------------- |
+ | amode   | amode <= acc  | 1010_0001_0100_0mmm | Load amode from acc[2:0]  |
+ | brk     | Breakpoint    | 1010_0000_0111_11xx | Halt the processor        |
+ | cpx_ra  | C,Z <= IX>=RA | 1000_1010_1101_00xx | Compare RA with IX        |
+ | cpx_sp  | C,Z <= IX>=SP | 1000_1010_1101_10xx | Compare SP with IX        |
+ | ldc     | C <= b        | 1010_0000_0000_1bxx | Load C flag from b        |
+ | ldirq   | acc <= IRQz,c | 1010_0001_0010_00xx | Load acc with IRQ [z,c]   |
+ | ldz     | Z <= b or ~Z  | 1010_0000_0110_cbxx | Z <= ~Z if c else b       |
+ | nop     | No operation  | 1010_0000_0111_00xx | Z <= ~Z if c else b       |
+ | notz    | Z <= ~Z       | 1010_0000_0111_01xx | Z <= ~Z if c else b       |
+ | eidi    | ie <= f       | 1010_0000_0111_10xf | Load Interrupt Enable     |
+ | xchg_ia | IA <=> IX     | 1000_1010_1100_01xx | Exchange IA with IX       |
+ | xchg_ra | RA <=> IX     | 1000_1010_1100_00xx | Exchange RA with IX       |
+ | xchg_sp | SP <=> IX     | 1000_1010_1100_10xx | Exchange SP with IX       |
+ | shl     | a <<= 1       | 1010_0000_0000_00xx | Shift acc left 1          |
+ | shl16   | a,M[SP] <<= 1 | 1010_0000_0010_iixx | 16-bit shift left 1       |
+ | shr     | a >>= 1       | 1010_0000_0000_01xx | Shift acc right 1         |
+ | shr16   | a,M[SP] >>= 1 | 1010_0000_0011_iixx | 16-bit shift right 1      |
+ | spix    | SP <= IX      | 1000_1010_1100_11xx | Load SP from IX           |
+ | stirq   | IRQz,c <= acc | 1010_0001_0010_01xx | Load IRQz,c from acc[1:0] |
+ | tax     | IX[L] <= acc  | 1010_0001_0000_00xx | Transfer acc to IX[7:0]   |
+ | taxu    | IX[H] <= acc  | 1010_0001_0000_01xx | Transfer acc to IX[14:0]  |
+ | txa     | acc <= IX[L]  | 1010_0000_0001_00xx | Transfer IX[7:0] to acc   |
+ | txau    | acc <= IX[H]  | 1010_0000_0001_10xx | Transfer IX[14:0] to acc  |
 
 ## How to test
 
