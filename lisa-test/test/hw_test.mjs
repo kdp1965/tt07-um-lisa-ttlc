@@ -5,7 +5,7 @@
 //   node hw_test.mjs                             # all scenarios
 //   node hw_test.mjs connect debug disconnect    # some of them
 //
-// Scenarios: connect, direct, vialisa, verify, debug, ttlc, disconnect.  "direct"
+// Scenarios: connect, direct, vialisa, verify, debug, ttlc, elevator, disconnect.  "direct"
 // and "vialisa" program the bring-up demo (an altered copy, then the
 // original) into the flash at address 0 - the flash contents are replaced.
 import fs from 'node:fs';
@@ -63,7 +63,7 @@ const fw = parseFirmware('bringup_tt07', new TextEncoder().encode(globalThis.LIS
 const alt = Uint8Array.from(fw.bytes);
 { const w = globalThis.LisaCore.toWords(fw.bytes); const i = w.findIndex((v, k) => v === 0x8041 && w[k + 2] === 0x8021); alt[2 * (i + 2)] = 0x2a; }
 
-const scenarios = process.argv.slice(2).length ? process.argv.slice(2) : ['connect', 'direct', 'vialisa', 'verify', 'debug', 'ttlc', 'disconnect'];
+const scenarios = process.argv.slice(2).length ? process.argv.slice(2) : ['connect', 'direct', 'vialisa', 'verify', 'debug', 'ttlc', 'elevator', 'disconnect'];
 try {
   for (const sc of scenarios) {
     console.log(`\n===== ${sc} =====`);
@@ -226,6 +226,45 @@ try {
       check(steps >= 20, `TTLC stepping through the elevator program (${steps} completed): ` + trace.slice(0, 16).join(' '));
       await cmdr.disableTtlc();
       check(!cmdr.state().ttlc.enabled && !cmdr.state().ttlc.sim, 'TTLC disabled, emulator stopped, uo_out back to LISA');
+    } else if (sc === 'elevator') {
+      // the 6-floor / 2-car controller, ticking fast (100 ms per floor)
+      const enc = x => new TextEncoder().encode(x);
+      const fw = parseFirmware('elevator6x2.hex', enc(globalThis.LISA_ASSETS.ttlc_firmware['elevator6x2.hex']));
+      await cmdr.programTtlc(fw.bytes, 0x10000, 3, true);
+      const floor = (o, base) => { const v = Number((o >> BigInt(base)) & 0x3fn); return v ? Math.log2(v) : -1; };
+      const show = o => `car1@${floor(o, 32)} car2@${floor(o, 38)} doors ${(o >> 22n) & 1n}/${(o >> 23n) & 1n} req ${(o & 0x3fffffn).toString(2).padStart(22, '0')}`;
+      const press = async n => { await cmdr.ttlcSetInputs(1n << BigInt(n)); await sleep(40); await cmdr.ttlcSetInputs(0n); };
+      const until = async (pred, ms, what) => {
+        const t0 = Date.now(); let o;
+        while (Date.now() - t0 < ms) { o = await cmdr.ttlcOutputs(); if (pred(o)) return o; await sleep(40); }
+        throw new Error(`${what}: not within ${ms} ms; last state ${show(o)}`);
+      };
+      await cmdr.ttlcRun(0n, 100);
+      await sleep(150);
+      let o = await cmdr.ttlcOutputs();
+      check(floor(o, 32) === 0 && floor(o, 38) === 0, 'both cars start at floor 0: ' + show(o));
+      await press(5);                                            // hall call: floor 3, up
+      o = await until(o => (o >> 5n) & 1n, 500, 'F3-up indicator');
+      check(true, 'momentary hall call latched: ' + show(o));
+      o = await until(o => !((o >> 5n) & 1n), 3000, 'F3 call serviced');
+      check(floor(o, 32) === 3 || floor(o, 38) === 3, 'a car reached floor 3 and cleared the call: ' + show(o));
+      check(((o >> 22n) & 1n) || ((o >> 23n) & 1n), 'its door is open: ' + show(o));
+      await sleep(400);                                          // doors close, cars settle
+      await press(10);                                           // car 1 cabin: floor 0
+      o = await until(o => (o >> 10n) & 1n, 500, 'cabin-1 floor-0 indicator');
+      o = await until(o => !((o >> 10n) & 1n), 3000, 'car 1 back at floor 0');
+      check(floor(o, 32) === 0, 'car 1 answered its cabin button and is at floor 0: ' + show(o));
+      await sleep(400);
+      await press(21);                                           // car 2 cabin: floor 5
+      o = await until(o => !((o >> 21n) & 1n), 3000, 'car 2 at floor 5');
+      check(floor(o, 38) === 5, 'car 2 went to floor 5: ' + show(o));
+      await sleep(400);
+      await press(2);                                            // hall call: floor 1, down
+      o = await until(o => !((o >> 2n) & 1n), 3000, 'F1-down call serviced');
+      check(floor(o, 32) === 1 || floor(o, 38) === 1, 'F1-down served (car 1 from 0 is closer): ' + show(o));
+      await cmdr.ttlcTick(0);
+      await cmdr.ttlcHalt();
+      await cmdr.disableTtlc();
     } else if (sc === 'disconnect') {
       await cmdr.disconnect();
       check(!cmdr.connected, 'disconnected');

@@ -274,7 +274,7 @@
         <span class="checkrow" style="padding:0"><input type="checkbox" id="ttlcLive" checked><label for="ttlcLive">live</label></span></div>
       <div class="iogrid" id="ttlcOut"></div>
       <div class="iolabel"><span>inputs 0 – 47 (click to toggle; address 48 + n)</span>
-        <span><a href="#" id="ttlcInClear">all off</a></span></div>
+        <span>tick on 47 every <input type="text" id="ttlcTickMs" value="500" size="4" style="width:4.5em;padding:1px 4px;font-size:11px"> ms (0 = off) &nbsp;<a href="#" id="ttlcInClear">all off</a></span></div>
       <div class="iogrid" id="ttlcIn"></div>
     </div>
   </aside>
@@ -1227,7 +1227,7 @@ class LisaCommander {
     this.flashBase = 0;
     // the TTLC (MC14500B) side: its own flash base, shift-clock divider, and
     // whether its registers / the RP2040 I/O emulator are active
-    this.ttlc = { base: 0x10000, clkDiv: 3, enabled: false, sim: false };
+    this.ttlc = { base: 0x10000, clkDiv: 3, enabled: false, sim: false, tickMs: 0 };
   }
 
   get connected() { return !!this.link && !this.link.closing; }
@@ -1478,17 +1478,20 @@ class LisaCommander {
   // `value` is a BigInt: bit i = TTLC input i (address 48 + i).
   async ttlcSetInputs(value) { await this.lisa.sideband(`ttlc.set_inputs(0x${value.toString(16)})`); }
   async ttlcOutputs() { const { r } = await this.lisa.sideband('ttlc.outputs()'); return BigInt('0x' + (r.outputs || '0')); }
+  // input 47 toggles every `ms` (0 = off): the clock PLC programs use for timing
+  async ttlcTick(ms) { if (!this.ttlc.sim) await this.ttlcSim(true); await this.lisa.sideband(`ttlc.tick(${ms | 0})`); this.ttlc.tickMs = ms | 0; }
 
-  async ttlcRun(inputs) {
+  async ttlcRun(inputs, tickMs) {
     if (!this.ttlc.sim) await this.ttlcSim(true);
     if (inputs !== undefined) await this.ttlcSetInputs(inputs);
+    if (tickMs !== undefined) await this.ttlcTick(tickMs);
     this.lisa.ttlcStack = [];
     await this._debuggerOp(() => this.lisa.ttlcRun());
   }
   async ttlcScan(nopos) { return this._debuggerOp(async () => { const r = await this.lisa.ttlcScan(nopos); return { ...r, ...(await this.ttlcStatus()) }; }); }
   async ttlcHalt()   { return this._debuggerOp(async () => { await this.lisa.ttlcHalt(); return this.ttlcStatus(); }); }
   async ttlcStep()   { return this._debuggerOp(async () => { const st = await this.lisa.ttlcStep(); return { ...(await this.ttlcStatus()), ...st }; }); }
-  async ttlcRestart(inputs) { await this.initLisa(); await this.ttlcRun(inputs); }
+  async ttlcRestart(inputs, tickMs) { await this.initLisa(); await this.ttlcRun(inputs, tickMs); }
 
   // Status plus a window of code around PC (the PC is only meaningful while halted).
   async ttlcStatus() {
@@ -1807,7 +1810,8 @@ function progress(done, total, what) {
 /* ---------------- TTLC panel ---------------- */
 
 const TTLC_LABELS = { 'ttlc_loopback.hex': 'I/O loopback: every scan copies inputs 0–47 to outputs 0–47',
-                      'elevator_ctrl.hex': 'Elevator control example (elevator_ctrl.asm)' };
+                      'elevator6x2.hex': 'Elevator controller: 6 floors, 2 cars (elevator6x2.asm, needs the tick)',
+                      'elevator_ctrl.hex': 'Elevator snippet (elevator_ctrl.asm)' };
 const ttlcSel = $('ttlcSel');
 for (const name of Object.keys(window.LISA_ASSETS.ttlc_firmware || {})) {
   const o = document.createElement('option');
@@ -1855,13 +1859,17 @@ const outCells = [], inCells = [];
 for (let i = 0; i < 48; i++) {
   const o = document.createElement('div'); o.className = 'cell'; o.textContent = i; o.title = `output ${i} (address ${i})`;
   $('ttlcOut').appendChild(o); outCells.push(o);
-  const b = document.createElement('div'); b.className = 'cell inp'; b.textContent = i; b.title = `input ${i} (address ${48 + i})`;
+  const b = document.createElement('div'); b.className = 'cell inp'; b.textContent = i === 47 ? 'tk' : i; b.title = i === 47 ? 'input 47 (address 95): the tick, when it runs' : `input ${i} (address ${48 + i})`;
   b.addEventListener('click', () => { ttlcInputs ^= 1n << BigInt(i); renderInputs(); pushInputs(); });
   $('ttlcIn').appendChild(b); inCells.push(b);
 }
 function renderInputs() { inCells.forEach((c, i) => c.classList.toggle('on', !!((ttlcInputs >> BigInt(i)) & 1n))); }
 function renderOutputs(v) { outCells.forEach((c, i) => c.classList.toggle('on', !!((v >> BigInt(i)) & 1n))); }
 $('ttlcInClear').addEventListener('click', e => { e.preventDefault(); ttlcInputs = 0n; renderInputs(); pushInputs(); });
+const ttlcTickMs = () => Math.max(0, Math.min(60000, +$('ttlcTickMs').value || 0));
+$('ttlcTickMs').addEventListener('change', () => guarded('Setting tick…', async () => {
+  if (cmdr.state().ttlc.sim) { await cmdr.ttlcTick(ttlcTickMs()); log(`tick on input 47: ${ttlcTickMs() ? ttlcTickMs() + ' ms' : 'off'}`); }
+}));
 
 // send the inputs to the emulator; coalesces rapid clicks
 let inputsSending = false, inputsDirty = false;
@@ -1905,11 +1913,11 @@ $('btnTtlcProgram').addEventListener('click', () => {
     await cmdr.programTtlc(fw.bytes, base, clkDiv, direct, (d, t) => progress(direct ? d >> 1 : d, direct ? t >> 1 : t, 'TTLC'));
     progress(fw.words, fw.words, 'TTLC done');
     log(`TTLC programmed in ${((performance.now() - t0) / 1000).toFixed(1)} s; starting the I/O emulator and the TTLC`, 'ok');
-    await cmdr.ttlcRun(ttlcInputs);
+    await cmdr.ttlcRun(ttlcInputs, ttlcTickMs());
     showTtlc(await cmdr.ttlcStatus());
   });
 });
-$('btnTtlcRun').addEventListener('click', () => guarded('Starting TTLC…', async () => { await cmdr.ttlcRun(ttlcInputs); showTtlc(await cmdr.ttlcStatus()); log('TTLC running'); }));
+$('btnTtlcRun').addEventListener('click', () => guarded('Starting TTLC…', async () => { await cmdr.ttlcRun(ttlcInputs, ttlcTickMs()); showTtlc(await cmdr.ttlcStatus()); log('TTLC running'); }));
 $('btnTtlcHalt').addEventListener('click', () => guarded('Halting TTLC…', async () => { const st = await cmdr.ttlcHalt(); showTtlc(st); log(`TTLC halted at PC 0x${st.pc.toString(16).padStart(3, '0')}`); renderOutputs(await cmdr.ttlcOutputs()); }));
 const h3 = v => '0x' + v.toString(16).padStart(3, '0');
 $('btnTtlcStep').addEventListener('click', () => guarded('Stepping TTLC…', async () => {
@@ -1927,7 +1935,7 @@ $('btnTtlcScan').addEventListener('click', () => guarded('Running one scan…', 
   log(st.completed ? `one scan done; TTLC stopped at ${h3(st.newPC)}` : `no nopo reached within 2 s; halted at ${h3(st.newPC)}`, st.completed ? 'dim' : 'err');
   renderOutputs(await cmdr.ttlcOutputs());
 }));
-$('btnTtlcRestart').addEventListener('click', () => guarded('Restarting TTLC…', async () => { await cmdr.ttlcRestart(ttlcInputs); showTtlc(await cmdr.ttlcStatus()); log('chip reset; TTLC running from address 0'); }));
+$('btnTtlcRestart').addEventListener('click', () => guarded('Restarting TTLC…', async () => { await cmdr.ttlcRestart(ttlcInputs, ttlcTickMs()); showTtlc(await cmdr.ttlcStatus()); log('chip reset; TTLC running from address 0'); }));
 $('ttlcClk').addEventListener('change', () => guarded('Setting shift clock…', async () => {
   if (cmdr.state().ttlc.enabled) await cmdr.enableTtlc(cmdr.ttlc.base, ttlcClkDiv());
 }));

@@ -29,7 +29,7 @@ every scan.  The web app sends this file to RAM next to lisa_flash.py.
 '''
 import rp2
 import uctypes
-from machine import Pin
+from machine import Pin, Timer
 
 _LATCH = 14
 _SCLK = 15
@@ -84,7 +84,10 @@ def _aligned(nbytes):
 class TtlcSim:
     def __init__(self):
         self.running = False
-        self.scans = 0
+        self.inputs = 0
+        self.timer = None
+        self.tick_state = 0
+        self.images = (bytes(8), bytes(8))
 
     def start(self):
         if self.running:
@@ -112,9 +115,30 @@ class TtlcSim:
         self.running = True
         print('@sim=1')
 
+    def tick(self, period_ms):
+        '''Toggle input 47 every period_ms (0 stops it): a clock for timing in PLC programs.'''
+        if self.timer:
+            self.timer.deinit()
+            self.timer = None
+        self.tick_state = 0
+        if period_ms > 0:
+            self.timer = Timer(-1)
+            self.timer.init(period=int(period_ms), mode=Timer.PERIODIC, callback=self._tick)
+        self._load_ring()
+        print('@tick=%d' % period_ms)
+
+    def _tick(self, t):
+        # soft timer callback: no allocation, just copy the precomputed image
+        self.tick_state ^= 1
+        self.in_ring[:] = self.images[self.tick_state]
+
+
     def stop(self):
         if not self.running:
             return
+        if self.timer:
+            self.timer.deinit()
+            self.timer = None
         self.feed.active(0)
         self.cap.active(0)
         self.dma_in.active(0)
@@ -127,17 +151,24 @@ class TtlcSim:
         self.running = False
         print('@sim=0')
 
-    def set_inputs(self, value):
-        '''value: 48-bit int, bit i = TTLC input i (address 48 + i).'''
+    @staticmethod
+    def _image(value):
+        # the two 24-bit words the feed machine shifts out for a 48-bit input vector
         w = [0, 0]
         for k in range(16):                 # scan order: bit 15 first
             b = 15 - k
             s = ((value >> b) & 1) | (((value >> (16 + b)) & 1) << 1) | (((value >> (32 + b)) & 1) << 2)
             w[k >> 3] |= s << (3 * (k & 7))
-        for i in range(2):
-            v = w[i]
-            for j in range(4):
-                self.in_ring[4 * i + j] = (v >> (8 * j)) & 0xff
+        return bytes(((w[i] >> (8 * j)) & 0xff) for i in range(2) for j in range(4))
+
+    def _load_ring(self):
+        self.images = (self._image(self.inputs & ~(1 << 47)), self._image(self.inputs | (1 << 47)))
+        self.in_ring[:] = self.images[self.tick_state if self.timer else (self.inputs >> 47) & 1]
+
+    def set_inputs(self, value):
+        '''value: 48-bit int, bit i = TTLC input i (address 48 + i); bit 47 is the tick's when it runs.'''
+        self.inputs = value
+        self._load_ring()
         print('@inputs=%012x' % value)
 
     def outputs(self):
