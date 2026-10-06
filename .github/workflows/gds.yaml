@@ -34,8 +34,11 @@ jobs:
       - name: Run Tiny Tapeout Precheck
         uses: TinyTapeout/tt-gds-action/precheck@tt07
 
+  # The Pages site is the LISA Commander web app (see pages.yaml); deploying
+  # the GDS viewer there replaces it, so only do that on a manual run.
   viewer:
     needs: gds
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       pages: write      # to deploy to Pages

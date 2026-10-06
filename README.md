@@ -65,6 +65,14 @@ CE activations (to work with RP2040).
 
 More documentation to come...
 
+## Testing it in a browser
+
+[`lisa-test/`](lisa-test/) contains **LISA Commander**, a Web Serial app (Chrome/Edge) for the
+TT06/TT07 demo board with the QSPI Pmod: it programs the SPI flash (directly from the RP2040, or
+through LISA's own debug/QSPI logic), runs, halts and single-steps the core, shows its registers,
+and gives you a console on LISA's UART. The bring-up demo prints a banner when you press `?`.
+It is live at **https://kdp1965.github.io/tt07-um-lisa-ttlc/**; see [`lisa-test/README.md`](lisa-test/README.md).
+
 ## What is Tiny Tapeout?
 
 TinyTapeout is an educational project that aims to make it easier and cheaper than ever to get your digital designs manufactured on a real chip.

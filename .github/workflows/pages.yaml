@@ -1,0 +1,51 @@
+name: pages
+
+# Publishes the LISA Commander web app (lisa-test/web) as this repository's
+# GitHub Pages site: https://kdp1965.github.io/tt07-um-lisa-ttlc/
+#
+# A Pages deployment replaces the whole site, so the GDS viewer deployment in
+# gds.yaml only runs when that workflow is started by hand.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lisa-test/**'
+      - '.github/workflows/pages.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate the embedded board files and firmware
+        run: |
+          cd lisa-test/web
+          cp assets.js /tmp/assets.committed.js
+          python3 build_assets.py
+          if ! cmp -s assets.js /tmp/assets.committed.js; then
+            echo "::warning::lisa-test/web/assets.js was stale - run 'python3 lisa-test/web/build_assets.py' and commit it"
+          fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: lisa-test/web
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
