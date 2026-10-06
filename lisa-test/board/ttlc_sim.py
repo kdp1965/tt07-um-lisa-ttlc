@@ -16,13 +16,15 @@ A scan is 16 shift clocks; bit 15 of each segment goes first and data is
 sampled on the rising edge.  The "capture" machine samples the three data-out
 lines on every rising edge and pushes 24 bits twice per scan.
 
-The TTLC's input shifter (shift_reg_io.v) shifts 17 times per scan: once per
-rising edge and once more after the last falling edge.  What it keeps is the
-last 16 samples, so the "feed" machine presents bit 15 after the FIRST falling
-edge (the sample taken at the first rising edge is the one that falls off the
-end) and leaves bit 0 on the pins for that 17th sample.  Real 74HC166 chains
-would hold their last bit there instead, and the TTLC would read every input
-one position too high.  DMA ring
+The TT07 silicon's input shifter (shift_reg_io.v) shifts 17 times per scan:
+once per rising edge and once more after the last falling edge.  What it
+keeps is the last 16 samples, so by default the "feed" machine presents bit
+15 after the FIRST falling edge (the sample taken at the first rising edge is
+the one that falls off the end) and leaves bit 0 on the pins for that 17th
+sample - the same thing an extra D flip-flop in front of a 74HC165 chain would
+do.  start(compensate=False) uses the plain 74HC165 timing instead, for RTL
+with the 16-sample scan (an FPGA build with the fix); it only matters when
+the emulator is started, not while it runs.  DMA ring
 buffers keep both FIFOs served without the CPU: the outputs always sit in
 `out_ring`, and whatever `set_inputs()` wrote to `in_ring` is replayed on
 every scan.  The web app sends this file to RAM next to lisa_flash.py.
@@ -60,6 +62,7 @@ def _capture():
 @rp2.asm_pio(out_init=(rp2.PIO.OUT_LOW,) * 3, out_shiftdir=rp2.PIO.SHIFT_RIGHT,
              autopull=True, pull_thresh=24)
 def _feed():
+    # for the TT07 silicon: each bit goes out AFTER the falling edge (see below)
     wrap_target()
     wait(0, gpio, 14)
     wait(1, gpio, 14)
@@ -67,7 +70,25 @@ def _feed():
     label("bit")
     wait(1, gpio, 15)
     wait(0, gpio, 15)
-    out(pins, 3)               # next bit of each segment, after the falling edge (see below)
+    out(pins, 3)
+    jmp(x_dec, "bit")
+    wait(0, gpio, 14)
+    wait(1, gpio, 14)
+    wrap()
+
+
+@rp2.asm_pio(out_init=(rp2.PIO.OUT_LOW,) * 3, out_shiftdir=rp2.PIO.SHIFT_RIGHT,
+             autopull=True, pull_thresh=24)
+def _feed_fixed():
+    # for RTL with the 16-sample scan: each bit goes out BEFORE its rising edge, like a 74HC165 chain
+    wrap_target()
+    wait(0, gpio, 14)
+    wait(1, gpio, 14)
+    set(x, 15)
+    label("bit")
+    out(pins, 3)
+    wait(1, gpio, 15)
+    wait(0, gpio, 15)
     jmp(x_dec, "bit")
     wait(0, gpio, 14)
     wait(1, gpio, 14)
@@ -84,21 +105,30 @@ def _aligned(nbytes):
 class TtlcSim:
     def __init__(self):
         self.running = False
+        self.compensate = True      # play the 17-sample scan of the TT07 silicon (False: fixed RTL)
         self.inputs = 0
         self.timer = None
         self.tick_state = 0
         self.images = (bytes(8), bytes(8))
 
-    def start(self):
+    def start(self, compensate=None):
         if self.running:
-            return
+            return                          # a different `compensate` takes effect at the next start
+        if compensate is not None:
+            self.compensate = compensate
         self.in_buf, self.in_addr, self.in_ring = _aligned(8)
         self.out_buf, self.out_addr, self.out_ring = _aligned(8)
         self.set_inputs(0)
         for sm in (_SM_FEED, _SM_CAP):      # PIO1 SM0/SM1 and its instruction memory are ours
             rp2.StateMachine(sm).active(0)
-        rp2.PIO(1).remove_program()
-        self.feed = rp2.StateMachine(_SM_FEED, _feed, out_base=Pin(_DIN))
+        pio = rp2.PIO(1)
+        for prog in (_feed, _feed_fixed, _capture):
+            try:
+                pio.remove_program(prog)    # also forgets where the program was loaded
+            except Exception:
+                pass
+        pio.remove_program()                # and anything left by an earlier load of this file
+        self.feed = rp2.StateMachine(_SM_FEED, _feed if self.compensate else _feed_fixed, out_base=Pin(_DIN))
         self.cap = rp2.StateMachine(_SM_CAP, _capture, in_base=Pin(_DOUT))
         self.dma_in = rp2.DMA()
         self.dma_out = rp2.DMA()
@@ -114,6 +144,7 @@ class TtlcSim:
         self.cap.active(1)
         self.running = True
         print('@sim=1')
+        print('@compensate=%d' % self.compensate)
 
     def tick(self, period_ms):
         '''Toggle input 47 every period_ms (0 stops it): a clock for timing in PLC programs.'''
@@ -141,10 +172,12 @@ class TtlcSim:
             self.timer = None
         self.feed.active(0)
         self.cap.active(0)
-        self.dma_in.active(0)
-        self.dma_out.active(0)
-        self.dma_in.close()
-        self.dma_out.close()
+        for d in (self.dma_in, self.dma_out):
+            # RP2040-E13: a DREQ-paced channel that is aborted while waiting for
+            # a DREQ restarts on the next one - disable it first, then abort
+            d.ctrl = d.pack_ctrl(enable=False)
+            d.active(0)
+            d.close()
         rp2.PIO(1).remove_program()
         for g in range(_DIN, _DIN + 3):     # give ui_in[4..6] back to the SDK (low)
             Pin(g, Pin.OUT, value=0)

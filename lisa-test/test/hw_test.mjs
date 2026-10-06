@@ -5,7 +5,7 @@
 //   node hw_test.mjs                             # all scenarios
 //   node hw_test.mjs connect debug disconnect    # some of them
 //
-// Scenarios: connect, direct, vialisa, verify, debug, ttlc, elevator, disconnect.  "direct"
+// Scenarios: connect, direct, vialisa, verify, debug, ttlc, tick, elevator, disconnect.  "direct"
 // and "vialisa" program the bring-up demo (an altered copy, then the
 // original) into the flash at address 0 - the flash contents are replaced.
 import fs from 'node:fs';
@@ -63,7 +63,7 @@ const fw = parseFirmware('bringup_tt07', new TextEncoder().encode(globalThis.LIS
 const alt = Uint8Array.from(fw.bytes);
 { const w = globalThis.LisaCore.toWords(fw.bytes); const i = w.findIndex((v, k) => v === 0x8041 && w[k + 2] === 0x8021); alt[2 * (i + 2)] = 0x2a; }
 
-const scenarios = process.argv.slice(2).length ? process.argv.slice(2) : ['connect', 'direct', 'vialisa', 'verify', 'debug', 'ttlc', 'elevator', 'disconnect'];
+const scenarios = process.argv.slice(2).length ? process.argv.slice(2) : ['connect', 'direct', 'vialisa', 'verify', 'debug', 'ttlc', 'tick', 'elevator', 'disconnect'];
 try {
   for (const sc of scenarios) {
     console.log(`\n===== ${sc} =====`);
@@ -222,6 +222,33 @@ try {
       check(steps === 12, `12 single steps advanced through the program to PC 0x${last.toString(16)}`);
       await cmdr.disableTtlc();
       check(!cmdr.state().ttlc.enabled && !cmdr.state().ttlc.sim, 'TTLC disabled, emulator stopped, uo_out back to LISA');
+    } else if (sc === 'tick') {
+      // the emulator's tick on input 47, seen through the loopback program; and the
+      // uncompensated (16-sample) feed, started fresh, which shows the silicon's 17th sample
+      const enc = x => new TextEncoder().encode(x);
+      const lb = parseFirmware('ttlc_loopback.hex', enc(globalThis.LISA_ASSETS.ttlc_firmware['ttlc_loopback.hex']));
+      await cmdr.programTtlc(lb.bytes, 0x10000, 3, true);
+      const toggles = async (label) => {
+        const seen = new Set();
+        for (let i = 0; i < 12; i++) { seen.add(Number((await cmdr.ttlcOutputs() >> 47n) & 1n)); await sleep(30); }
+        check(seen.size === 2, `${label}: output 47 toggles (saw ${[...seen].join(',')})`);
+      };
+      await cmdr.ttlcRun(0n, 100);
+      await toggles('tick 100 ms');
+      await cmdr.ttlcTick(0); await sleep(100);
+      const off = new Set(); for (let i = 0; i < 6; i++) { off.add(Number((await cmdr.ttlcOutputs() >> 47n) & 1n)); await sleep(30); }
+      check(off.size === 1, 'tick off: output 47 steady');
+      await cmdr.ttlcHalt(); await cmdr.ttlcSim(false);
+      cmdr.ttlc.compensate = false;
+      await cmdr.ttlcRun(0x000100010001n);                   // emulator starts fresh in 16-sample mode
+      await sleep(60);
+      const raw = await cmdr.ttlcOutputs();
+      check(raw === 0x000300030003n, `16-sample feed on this silicon reads one position high: ${raw.toString(16).padStart(12, '0')}`);
+      await cmdr.ttlcHalt(); await cmdr.ttlcSim(false);
+      cmdr.ttlc.compensate = true;
+      await cmdr.ttlcRun(0x000100010001n); await sleep(60);
+      check((await cmdr.ttlcOutputs()) === 0x000100010001n, '17-sample feed (default): exact');
+      await cmdr.ttlcHalt(); await cmdr.disableTtlc();
     } else if (sc === 'elevator') {
       // the 6-floor / 2-car controller, ticking fast (100 ms per floor)
       const enc = x => new TextEncoder().encode(x);

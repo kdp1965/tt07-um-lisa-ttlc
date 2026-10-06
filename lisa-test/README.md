@@ -160,16 +160,23 @@ TT07 board:
   true. The `shift_count` decrement next to it is gated with `!last_clk`; the
   input shift is not. The 16-bit register keeps the last 16 of the 17 samples:
   the chain's bit 15 is shifted out, bits 14…0 land in bits 15…1, and bit 0
-  gets sample 17 — the level the data line holds after the last clock, i.e.
-  the chain's last bit again. Per 16-bit segment, `input_pins[i] = external
-  bit i-1` and `input_pins[0] = external bit 0`: with real 74HC165/166 chains
-  every input reads one position too high, inputs 0/1, 16/17, 32/33 are
-  identical, and inputs 15, 31, 47 cannot be read. (The loopback showed it as
-  `0001 → 0003`, `aaaa → 5554`.) RTL fix: add `&& !last_clk` to the input
-  shift condition. The emulator compensates by presenting each bit one edge
-  later — bit 15 after the first falling edge, so the first (discarded) sample
-  is just the stale line, and bit 0 after the 16th falling edge, where the
-  17th sample picks it up.
+  gets sample 17 — whatever the data line holds after the last clock: with a
+  74HC165 chain that is the level shifted in behind bit 0 (its DS pin), so per
+  16-bit segment `input_pins[i] = external bit i-1` for i = 1…15 and input 0
+  reads a constant: every input one position too high, bits 15/31/47 lost.
+  (The loopback showed it as `0001 → 0003`, `aaaa → 5554`, with the emulator
+  holding bit 0 on the line.) RTL fix, e.g. for an FPGA build: add
+  `&& !last_clk` to the input shift condition. Hardware fix for the TT07
+  silicon: delay each data-in line by one shift clock — a D flip-flop (one
+  74HC175 for the three lines) clocked by the shift clock between the 165
+  chain and `ui_in[6:4]`, or simply wire the parallel inputs one stage closer
+  to the serial output so a dummy bit is clocked out first. (The planned
+  respin of the TTLC Pmod — the first one has its input and output connectors
+  swapped — adds that 74HC175 as a 17th dummy stage on each of the three
+  chains.) The emulator does
+  the same in software (each bit presented one edge later); untick "play the
+  TT07 silicon's 17-sample input scan" in the panel (before starting the TTLC)
+  for RTL that has the fix.
 * **The latch pulse cannot load a 74HC166.** `latch` is pulsed low before the
   scan with the shift clock held still; a 74HC166 loads its parallel inputs
   only on a clock edge while /PE is low, so on a real I/O Pmod use a 74HC165

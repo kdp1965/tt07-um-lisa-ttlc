@@ -302,6 +302,8 @@
       <div class="iolabel"><span>inputs 0 – 47 (click to toggle; address 48 + n)</span>
         <span>tick on 47 every <input type="text" id="ttlcTickMs" value="500" size="4" style="width:4.5em;padding:1px 4px;font-size:11px"> ms (0 = off) &nbsp;<a href="#" id="ttlcInClear">all off</a></span></div>
       <div class="iogrid" id="ttlcIn"></div>
+      <div class="checkrow" style="margin-top:8px"><input type="checkbox" id="ttlcComp" checked>
+        <label for="ttlcComp">play the TT07 silicon's 17-sample input scan (untick for RTL with the fix, e.g. on an FPGA; applies when the TTLC is next started)</label></div>
     </div>
   </aside>
 
@@ -1266,7 +1268,7 @@ class LisaCommander {
     this.flashBase = 0;
     // the TTLC (MC14500B) side: its own flash base, shift-clock divider, and
     // whether its registers / the RP2040 I/O emulator are active
-    this.ttlc = { base: 0x10000, clkDiv: 3, enabled: false, sim: false, tickMs: 0 };
+    this.ttlc = { base: 0x10000, clkDiv: 3, enabled: false, sim: false, tickMs: 0, compensate: true };
   }
 
   get connected() { return !!this.link && !this.link.closing; }
@@ -1509,8 +1511,9 @@ class LisaCommander {
     this._changed();
   }
 
-  async ttlcSim(on) {
-    await this.lisa.sideband(on ? 'ttlc.start()' : 'ttlc.stop()');
+  async ttlcSim(on, compensate = this.ttlc.compensate) {
+    this.ttlc.compensate = compensate;
+    await this.lisa.sideband(on ? `ttlc.start(${compensate ? 'True' : 'False'})` : 'ttlc.stop()');
     this.ttlc.sim = on;
     this._changed();
   }
@@ -1530,7 +1533,7 @@ class LisaCommander {
   async ttlcScan(nopos) { return this._debuggerOp(async () => { const r = await this.lisa.ttlcScan(nopos); return { ...r, ...(await this.ttlcStatus()) }; }); }
   async ttlcHalt()   { return this._debuggerOp(async () => { await this.lisa.ttlcHalt(); return this.ttlcStatus(); }); }
   async ttlcStep()   { return this._debuggerOp(async () => { const st = await this.lisa.ttlcStep(); return { ...(await this.ttlcStatus()), ...st }; }); }
-  async ttlcRestart(inputs, tickMs) { await this.initLisa(); await this.ttlcRun(inputs, tickMs); }
+  async ttlcRestart(inputs, tickMs) { if (this.ttlc.sim) await this.ttlcSim(false); await this.initLisa(); await this.ttlcRun(inputs, tickMs); }
 
   // Status plus a window of code around PC (the PC is only meaningful while halted).
   async ttlcStatus() {
@@ -1938,6 +1941,11 @@ function renderOutputs(v) {
 }
 $('ttlcInClear').addEventListener('click', e => { e.preventDefault(); ttlcInputs = 0n; renderInputs(); pushInputs(); });
 const ttlcTickMs = () => Math.max(0, Math.min(60000, +$('ttlcTickMs').value || 0));
+$('ttlcComp').addEventListener('change', () => {
+  cmdr.ttlc.compensate = $('ttlcComp').checked;
+  log(($('ttlcComp').checked ? 'emulator will play the 17-sample scan (TT07 silicon)' : 'emulator will play a 16-sample scan (fixed RTL)') +
+      (cmdr.state().ttlc.sim ? ' - from the next Program & run / Restart' : ''));
+});
 $('ttlcTickMs').addEventListener('change', () => guarded('Setting tick…', async () => {
   if (cmdr.state().ttlc.sim) { await cmdr.ttlcTick(ttlcTickMs()); log(`tick on input 47: ${ttlcTickMs() ? ttlcTickMs() + ' ms' : 'off'}`); }
 }));
