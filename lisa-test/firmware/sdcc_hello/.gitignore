@@ -1,0 +1,9 @@
+# build products; the embedded image is ../sdcc_hello.ihx
+*.asm
+*.ihx
+*.lst
+*.map
+*.rel
+*.rst
+*.sym
+*.lk

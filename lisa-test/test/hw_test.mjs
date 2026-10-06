@@ -108,8 +108,9 @@ try {
       await waitConsole(/compiled by sdcc -mlisa/, 4000);
       check(/jgs/.test(consoleBuf), 'owl banner from the C firmware');
       await cmdr.consoleSend(new TextEncoder().encode('s'));
-      const out = await waitConsole(/Count: \d+ sum: \d+/, 4000);
-      const m = out.match(/Count: (\d+) sum: (\d+)/);
+      // wait for the end of the line: the digits arrive one UART byte at a time
+      const out = await waitConsole(/Count: \d+ sum: \d+\r?\n/, 4000);
+      const m = out.match(/Count: (\d+) sum: (\d+)\r?\n/);
       check(+m[2] === '?'.charCodeAt(0) + 's'.charCodeAt(0), `printf %u works on the chip: ${m[0]} (sum of '?' and 's')`);
     } else if (sc.startsWith('ihx=')) {
       const file = sc.slice(4);
