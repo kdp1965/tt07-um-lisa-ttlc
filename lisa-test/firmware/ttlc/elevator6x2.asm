@@ -9,8 +9,9 @@ rising edge of the TICK input, then run both cars.  On a tick a car either
 keeps its door open (two ticks), closes it, opens it because a request is
 at its floor (clearing that floor's indicators), or moves one floor toward
 the nearest pending request, continuing in its direction while there is
-something ahead (collective control).  Both cars answer hall calls; car 1
-has priority at a floor where both stand.
+something ahead (collective control).  A new hall call is dispatched to one
+car: the car at that floor, else an idle car (the one within two floors if
+both are idle), else car 1; a car stopping at a floor clears every call there.
 
 asmsyntax=mc14500b
 ================================================================================
@@ -20,6 +21,178 @@ include <elevator6x2.h>
 
 loop:
     nopo                   // scan: outputs out, inputs in
+
+    // ----------------------------------------------------------------------
+    // dispatch: a hall call that just appeared at a floor is given to one car
+    // ----------------------------------------------------------------------
+    // (per floor; while a call there is pending the choice stands)
+    // pick car 2 when: car 1 is not at the floor, and car 2 is there, or car 2 is idle
+    //   and (car 1 is busy, or car 2 is within two floors and car 1 is not)
+    // temporaries borrowed from R0..R4 (the cars recompute them later in the scan)
+    // floor 0
+    ld     POS1+0
+    or     POS1+1
+    or     POS1+2
+    sto    R0              // car 1 within two floors
+    ld     POS2+0
+    or     POS2+1
+    or     POS2+2
+    sto    R1              // car 2 within two floors
+    ld     R1
+    andc   R0
+    or     BUSY1
+    andc   BUSY2
+    or     POS2+0
+    andc   POS1+0
+    sto    R2              // R2 = pick car 2
+    ld     HALL_UP0
+    sto    R3              // R3 = a call at this floor is already pending
+    ld     BTN_UP0
+    andc   R3              // RR = a new call
+    oen    RR
+    ld     R2
+    sto    ASG0
+    oen    ONE
+    // floor 1
+    ld     POS1+0
+    or     POS1+1
+    or     POS1+2
+    or     POS1+3
+    sto    R0              // car 1 within two floors
+    ld     POS2+0
+    or     POS2+1
+    or     POS2+2
+    or     POS2+3
+    sto    R1              // car 2 within two floors
+    ld     R1
+    andc   R0
+    or     BUSY1
+    andc   BUSY2
+    or     POS2+1
+    andc   POS1+1
+    sto    R2              // R2 = pick car 2
+    ld     HALL_UP1
+    or     HALL_DN1
+    sto    R3              // R3 = a call at this floor is already pending
+    ld     BTN_UP1
+    or     BTN_DN1
+    andc   R3              // RR = a new call
+    oen    RR
+    ld     R2
+    sto    ASG1
+    oen    ONE
+    // floor 2
+    ld     POS1+0
+    or     POS1+1
+    or     POS1+2
+    or     POS1+3
+    or     POS1+4
+    sto    R0              // car 1 within two floors
+    ld     POS2+0
+    or     POS2+1
+    or     POS2+2
+    or     POS2+3
+    or     POS2+4
+    sto    R1              // car 2 within two floors
+    ld     R1
+    andc   R0
+    or     BUSY1
+    andc   BUSY2
+    or     POS2+2
+    andc   POS1+2
+    sto    R2              // R2 = pick car 2
+    ld     HALL_UP2
+    or     HALL_DN2
+    sto    R3              // R3 = a call at this floor is already pending
+    ld     BTN_UP2
+    or     BTN_DN2
+    andc   R3              // RR = a new call
+    oen    RR
+    ld     R2
+    sto    ASG2
+    oen    ONE
+    // floor 3
+    ld     POS1+1
+    or     POS1+2
+    or     POS1+3
+    or     POS1+4
+    or     POS1+5
+    sto    R0              // car 1 within two floors
+    ld     POS2+1
+    or     POS2+2
+    or     POS2+3
+    or     POS2+4
+    or     POS2+5
+    sto    R1              // car 2 within two floors
+    ld     R1
+    andc   R0
+    or     BUSY1
+    andc   BUSY2
+    or     POS2+3
+    andc   POS1+3
+    sto    R2              // R2 = pick car 2
+    ld     HALL_UP3
+    or     HALL_DN3
+    sto    R3              // R3 = a call at this floor is already pending
+    ld     BTN_UP3
+    or     BTN_DN3
+    andc   R3              // RR = a new call
+    oen    RR
+    ld     R2
+    sto    ASG3
+    oen    ONE
+    // floor 4
+    ld     POS1+2
+    or     POS1+3
+    or     POS1+4
+    or     POS1+5
+    sto    R0              // car 1 within two floors
+    ld     POS2+2
+    or     POS2+3
+    or     POS2+4
+    or     POS2+5
+    sto    R1              // car 2 within two floors
+    ld     R1
+    andc   R0
+    or     BUSY1
+    andc   BUSY2
+    or     POS2+4
+    andc   POS1+4
+    sto    R2              // R2 = pick car 2
+    ld     HALL_UP4
+    or     HALL_DN4
+    sto    R3              // R3 = a call at this floor is already pending
+    ld     BTN_UP4
+    or     BTN_DN4
+    andc   R3              // RR = a new call
+    oen    RR
+    ld     R2
+    sto    ASG4
+    oen    ONE
+    // floor 5
+    ld     POS1+3
+    or     POS1+4
+    or     POS1+5
+    sto    R0              // car 1 within two floors
+    ld     POS2+3
+    or     POS2+4
+    or     POS2+5
+    sto    R1              // car 2 within two floors
+    ld     R1
+    andc   R0
+    or     BUSY1
+    andc   BUSY2
+    or     POS2+5
+    andc   POS1+5
+    sto    R2              // R2 = pick car 2
+    ld     HALL_DN5
+    sto    R3              // R3 = a call at this floor is already pending
+    ld     BTN_DN5
+    andc   R3              // RR = a new call
+    oen    RR
+    ld     R2
+    sto    ASG5
+    oen    ONE
 
     // ----------------------------------------------------------------------
     // sticky request indicators: output n |= input n  (hall calls, both cabins)
@@ -116,27 +289,33 @@ loop:
     // ----------------------------------------------------------------------
     // car 1: requests that concern this car, per floor
     // ----------------------------------------------------------------------
-    // R_f = cabin button f | hall calls at f
+    // R_f = cabin button f | hall calls at f assigned to this car
     ld     HALL_UP0
+    andc   ASG0
     or     CAB1+0
     sto    R0
     ld     HALL_UP1
     or     HALL_DN1
+    andc   ASG1
     or     CAB1+1
     sto    R1
     ld     HALL_UP2
     or     HALL_DN2
+    andc   ASG2
     or     CAB1+2
     sto    R2
     ld     HALL_UP3
     or     HALL_DN3
+    andc   ASG3
     or     CAB1+3
     sto    R3
     ld     HALL_UP4
     or     HALL_DN4
+    andc   ASG4
     or     CAB1+4
     sto    R4
     ld     HALL_DN5
+    andc   ASG5
     or     CAB1+5
     sto    R5
 
@@ -369,6 +548,15 @@ loop:
     oen    ONE
 
     // ----------------------------------------------------------------------
+    // car 1: busy (for dispatching new hall calls on the next scan)
+    // ----------------------------------------------------------------------
+    ld     ANY_ABOVE
+    or     ANY_BELOW
+    or     REQ_HERE
+    or     C1_DWELL
+    sto    BUSY1
+
+    // ----------------------------------------------------------------------
     // car 2: start at floor 0 when no position bit is set yet (after reset)
     // ----------------------------------------------------------------------
     ld     POS2+0
@@ -384,33 +572,33 @@ loop:
     // ----------------------------------------------------------------------
     // car 2: requests that concern this car, per floor
     // ----------------------------------------------------------------------
-    // R_f = cabin button f | hall calls at f (unless car 1 is there: it takes them)
+    // R_f = cabin button f | hall calls at f assigned to this car
     ld     HALL_UP0
-    andc   POS1+0
+    and    ASG0
     or     CAB2+0
     sto    R0
     ld     HALL_UP1
     or     HALL_DN1
-    andc   POS1+1
+    and    ASG1
     or     CAB2+1
     sto    R1
     ld     HALL_UP2
     or     HALL_DN2
-    andc   POS1+2
+    and    ASG2
     or     CAB2+2
     sto    R2
     ld     HALL_UP3
     or     HALL_DN3
-    andc   POS1+3
+    and    ASG3
     or     CAB2+3
     sto    R3
     ld     HALL_UP4
     or     HALL_DN4
-    andc   POS1+4
+    and    ASG4
     or     CAB2+4
     sto    R4
     ld     HALL_DN5
-    andc   POS1+5
+    and    ASG5
     or     CAB2+5
     sto    R5
 
@@ -641,6 +829,15 @@ loop:
     ld     MV_DN
     sto    DOWN2
     oen    ONE
+
+    // ----------------------------------------------------------------------
+    // car 2: busy (for dispatching new hall calls on the next scan)
+    // ----------------------------------------------------------------------
+    ld     ANY_ABOVE
+    or     ANY_BELOW
+    or     REQ_HERE
+    or     C2_DWELL
+    sto    BUSY2
 
     // ----------------------------------------------------------------------
     // next scan

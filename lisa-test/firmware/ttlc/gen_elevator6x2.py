@@ -42,14 +42,12 @@ def car(n):
     op('sto', f'{POS}+0')
 
     section(f'car {n}: requests that concern this car, per floor')
-    emit(f'    // R_f = cabin button f | hall calls at f' +
-         (' (unless car 1 is there: it takes them)' if n == 2 else ''))
+    emit(f'    // R_f = cabin button f | hall calls at f assigned to this car')
     for f in range(FLOORS):
         first = True
         for h in HALL[f]:
             op('ld' if first else 'or', h); first = False
-        if n == 2:
-            op('andc', f'{OPOS}+{f}')
+        op('andc' if n == 1 else 'and', f'ASG{f}')
         op('or', f'{CAB}+{f}')
         op('sto', f'R{f}')
 
@@ -130,6 +128,10 @@ def car(n):
     op('ld', 'MV_DN'); op('sto', LDN)
     op('oen', 'ONE')
 
+    section(f'car {n}: busy (for dispatching new hall calls on the next scan)')
+    op('ld', 'ANY_ABOVE'); op('or', 'ANY_BELOW'); op('or', 'REQ_HERE'); op('or', DWELL)
+    op('sto', f'BUSY{n}')
+
 
 emit('/*')
 emit('=' * 80)
@@ -142,8 +144,9 @@ emit('rising edge of the TICK input, then run both cars.  On a tick a car either
 emit('keeps its door open (two ticks), closes it, opens it because a request is')
 emit('at its floor (clearing that floor\'s indicators), or moves one floor toward')
 emit('the nearest pending request, continuing in its direction while there is')
-emit('something ahead (collective control).  Both cars answer hall calls; car 1')
-emit('has priority at a floor where both stand.')
+emit('something ahead (collective control).  A new hall call is dispatched to one')
+emit('car: the car at that floor, else an idle car (the one within two floors if')
+emit('both are idle), else car 1; a car stopping at a floor clears every call there.')
 emit('')
 emit('asmsyntax=mc14500b')
 emit('=' * 80)
@@ -153,6 +156,33 @@ emit('include <elevator6x2.h>')
 emit()
 emit('loop:')
 op('nopo', None, 'scan: outputs out, inputs in')
+
+section('dispatch: a hall call that just appeared at a floor is given to one car')
+emit('    // (per floor; while a call there is pending the choice stands)')
+emit('    // pick car 2 when: car 1 is not at the floor, and car 2 is there, or car 2 is idle')
+emit('    //   and (car 1 is busy, or car 2 is within two floors and car 1 is not)')
+emit('    // temporaries borrowed from R0..R4 (the cars recompute them later in the scan)')
+for f in range(FLOORS):
+    emit(f'    // floor {f}')
+    win = [g for g in range(f - 2, f + 3) if 0 <= g < FLOORS]
+    for c, T in ((1, 'R0'), (2, 'R1')):
+        first = True
+        for g in win:
+            op('ld' if first else 'or', f'POS{c}+{g}'); first = False
+        op('sto', T, f'car {c} within two floors')
+    op('ld', 'R1'); op('andc', 'R0'); op('or', 'BUSY1'); op('andc', 'BUSY2')
+    op('or', f'POS2+{f}'); op('andc', f'POS1+{f}'); op('sto', 'R2', 'R2 = pick car 2')
+    first = True
+    for h in HALL[f]:
+        op('ld' if first else 'or', h); first = False
+    op('sto', 'R3', 'R3 = a call at this floor is already pending')
+    first = True
+    for b in BUTTON[f]:
+        op('ld' if first else 'or', b); first = False
+    op('andc', 'R3', 'RR = a new call')
+    op('oen', 'RR')
+    op('ld', 'R2'); op('sto', f'ASG{f}')
+    op('oen', 'ONE')
 
 section('sticky request indicators: output n |= input n  (hall calls, both cabins)')
 for n in range(22):

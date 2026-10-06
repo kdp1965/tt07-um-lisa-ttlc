@@ -190,40 +190,36 @@ try {
       check(out2 === 0n, 'emulator still answers (sideband) while LISA owns the UART');
       const h = await cmdr.ttlcHalt();
       check(!h.run, `TTLC halted at PC 0x${h.pc.toString(16)}`);
-      // the elevator example, programmed through LISA at another base
-      const el = parseFirmware('elevator_ctrl.hex', enc(globalThis.LISA_ASSETS.ttlc_firmware['elevator_ctrl.hex']));
+      // the elevator controller, programmed through LISA at another base
+      const el = parseFirmware('elevator6x2.hex', enc(globalThis.LISA_ASSETS.ttlc_firmware['elevator6x2.hex']));
       t = Date.now();
       await cmdr.programTtlc(el.bytes, 0x20000, 3, false);
-      log(`elevator example programmed via LISA at 0x20000 in ${(Date.now() - t) / 1000} s`);
-      await cmdr.ttlcRun(0n); await sleep(100);
+      log(`elevator controller programmed via LISA at 0x20000 in ${(Date.now() - t) / 1000} s`);
+      await cmdr.ttlcRun(0n, 100); await sleep(150);
       let o = await cmdr.ttlcOutputs();
-      check((o & 1n) === 0n, `elevator idle: UP1_LED off (outputs ${o.toString(16)})`);
-      await cmdr.ttlcSetInputs(1n); await sleep(100);        // UP1 = input 0
-      o = await cmdr.ttlcOutputs();
-      check((o & 1n) === 1n, `UP1 pressed -> UP1_LED on (outputs ${o.toString(16)})`);
-      await cmdr.ttlcSetInputs(0n); await sleep(100);
-      o = await cmdr.ttlcOutputs();
-      check((o & 1n) === 1n, `UP1 released -> UP1_LED stays latched by UP1_HOLD (outputs ${o.toString(16)})`);
+      check(((o >> 32n) & 0x3fn) === 1n && ((o >> 38n) & 0x3fn) === 1n, `both cars at floor 0 (outputs ${o.toString(16)})`);
+      const poll = async (pred, ms, what) => {
+        const t0 = Date.now(); let v;
+        while (Date.now() - t0 < ms) { v = await cmdr.ttlcOutputs(); if (pred(v)) return v; await sleep(25); }
+        throw new Error(`${what}: not within ${ms} ms (outputs ${v.toString(16)})`);
+      };
+      await cmdr.ttlcSetInputs(1n); await sleep(40); await cmdr.ttlcSetInputs(0n);   // F0 up: a car is already there
+      o = await poll(v => (v & 1n) || ((v >> 22n) & 1n), 400, 'F0-up latched or served');
+      check(true, `F0-up seen (outputs ${o.toString(16)})`);
+      o = await poll(v => !(v & 1n) && ((v >> 22n) & 1n), 600, 'served on the spot by car 1');
+      check(true, `served on the spot by car 1: indicator off, its door open (outputs ${o.toString(16)})`);
+      o = await poll(v => !((v >> 22n) & 1n), 600, 'door closes again');
+      check(((o >> 32n) & 0x3fn) === 1n, `door closed, car 1 still at floor 0 (outputs ${o.toString(16)})`);
+      await cmdr.ttlcTick(0);
       await cmdr.ttlcHalt();
-      // from a scan boundary (PC 1), step through the elevator's control flow:
-      // the jmp at 0xd to test_jump (0x19), its rtn back to 0xe, the nopf at 0x13 to 0
+      // step from a scan boundary through the straight-line controller
       const elWords = globalThis.LisaCore.toWords(el.bytes);
-      const sc2 = await cmdr.ttlcScan(elWords.map((w, a) => (w & 0xf) === 0 ? a : -1).filter(a => a >= 0));
+      const nopos = elWords.map((w, a) => (w & 0xf) === 0 ? a : -1).filter(a => a >= 0);
+      const sc2 = await cmdr.ttlcScan(nopos);
       check(sc2.completed && sc2.newPC === 1, `elevator: scan stops after the nopo at PC ${sc2.newPC}`);
-      const trace = [];
-      let steps = 0;
-      for (let i = 0; i < 24; i++) {
-        let r;
-        try { r = await cmdr.ttlcStep(); }
-        catch (e) {                         // an rtn whose jmp ran as the "one late" instruction: not trackable
-          trace.push('(rtn: unknown target)');
-          await cmdr.ttlcScan(elWords.map((w, a) => (w & 0xf) === 0 ? a : -1).filter(a => a >= 0));
-          continue;
-        }
-        trace.push(`${ttlcDisassemble(r.op).split(/\s+/)[0]}@${r.fromPC.toString(16)}->${r.newPC.toString(16)}`);
-        if (r.completed) steps++;
-      }
-      check(steps >= 20, `TTLC stepping through the elevator program (${steps} completed): ` + trace.slice(0, 16).join(' '));
+      let steps = 0, last = sc2.newPC;
+      for (let i = 0; i < 12; i++) { const r = await cmdr.ttlcStep(); if (r.completed && r.newPC > last) steps++; last = r.newPC; }
+      check(steps === 12, `12 single steps advanced through the program to PC 0x${last.toString(16)}`);
       await cmdr.disableTtlc();
       check(!cmdr.state().ttlc.enabled && !cmdr.state().ttlc.sim, 'TTLC disabled, emulator stopped, uo_out back to LISA');
     } else if (sc === 'elevator') {
@@ -248,6 +244,7 @@ try {
       check(true, 'momentary hall call latched: ' + show(o));
       o = await until(o => !((o >> 5n) & 1n), 3000, 'F3 call serviced');
       check(floor(o, 32) === 3 || floor(o, 38) === 3, 'a car reached floor 3 and cleared the call: ' + show(o));
+      check(floor(o, 32) === 0 || floor(o, 38) === 0, 'only one car was dispatched; the other stayed at floor 0: ' + show(o));
       check(((o >> 22n) & 1n) || ((o >> 23n) & 1n), 'its door is open: ' + show(o));
       await sleep(400);                                          // doors close, cars settle
       await press(10);                                           // car 1 cabin: floor 0
@@ -261,7 +258,7 @@ try {
       await sleep(400);
       await press(2);                                            // hall call: floor 1, down
       o = await until(o => !((o >> 2n) & 1n), 3000, 'F1-down call serviced');
-      check(floor(o, 32) === 1 || floor(o, 38) === 1, 'F1-down served (car 1 from 0 is closer): ' + show(o));
+      check(floor(o, 32) === 1 && floor(o, 38) === 5, 'F1-down dispatched to car 1 (idle at 0, within two floors); car 2 stayed at 5: ' + show(o));
       await cmdr.ttlcTick(0);
       await cmdr.ttlcHalt();
       await cmdr.disableTtlc();

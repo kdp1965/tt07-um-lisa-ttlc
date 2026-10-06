@@ -80,5 +80,13 @@ enum {
   C1_DWELL2,               //   first dwell tick still pending
   C2_DIR,
   C2_DWELL,
-  C2_DWELL2
+  C2_DWELL2,
+  ASG0,                    // hall calls at floor f are assigned to car 2 (else car 1)
+  ASG1,
+  ASG2,
+  ASG3,
+  ASG4,
+  ASG5,
+  BUSY1,                   // car had something to do on the previous scan
+  BUSY2
 };

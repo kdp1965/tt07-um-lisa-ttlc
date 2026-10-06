@@ -49,6 +49,8 @@ assets = {
     'ttlc_sim.py': strip_python(read(os.path.join(BOARD, 'ttlc_sim.py'))),
     'firmware': files(FIRMWARE),                            # LISA images
     'ttlc_firmware': files(os.path.join(FIRMWARE, 'ttlc'), '.hex'),   # TTLC (MC14500B) images
+    'ttlc_sources': {**files(os.path.join(FIRMWARE, 'ttlc'), '.asm'),   # ...and their assembly + headers
+                     **files(os.path.join(FIRMWARE, 'ttlc'), '.h')},
 }
 
 out = os.path.join(HERE, 'assets.js')

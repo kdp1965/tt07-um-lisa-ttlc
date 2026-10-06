@@ -126,6 +126,18 @@
   .iogrid .inp:hover { border-color: rgba(255,255,255,.35); }
   .iogrid .inp.on { background: var(--accent); color: #fff; }
   .iolabel { font-size: 10.5px; color: var(--muted); margin-top: 8px; display: flex; justify-content: space-between; }
+  dialog#srcDlg {
+    background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 12px;
+    padding: 0; width: min(900px, 92vw); max-height: 88vh;
+  }
+  dialog#srcDlg::backdrop { background: rgba(0,0,0,.6); }
+  #srcHead { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  #srcHead .tab { padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; font-size: 12.5px; color: var(--ink-2); }
+  #srcHead .tab.on { background: var(--accent); color: #fff; border-color: transparent; }
+  #srcBody {
+    margin: 0; padding: 12px 14px; max-height: calc(88vh - 56px); overflow: auto;
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-2); white-space: pre; tab-size: 4;
+  }
   #elevPanel svg { width: 100%; height: auto; max-height: 470px; display: block; user-select: none; }
   #elevPanel .btn { cursor: pointer; }
   #elevPanel .btn circle, #elevPanel .btn rect.key { fill: #2a2a28; stroke: rgba(255,255,255,.18); transition: fill .1s; }
@@ -255,7 +267,7 @@
     </div>
 
     <div class="panel">
-      <h2>TTLC — MC14500B logic controller <span class="spacer"></span><span class="tag" id="tagTtlc">off</span></h2>
+      <h2>TTLC — MC14500B logic controller <span class="spacer"></span><button class="mini" id="btnTtlcSrc" title="Show the MC14500B assembly of the selected program">Show source</button> <span class="tag" id="tagTtlc">off</span></h2>
       <div class="field"><span>program</span>
         <select id="ttlcSel"></select></div>
       <div class="field" id="ttlcFileRow" style="margin-top:8px;display:none"><span>file (<code>@addr</code> + hex bytes from <code>mc14500_as.py</code>, or 4-digit opcodes)</span>
@@ -294,13 +306,6 @@
   </aside>
 
   <section class="stage">
-    <div class="panel" id="elevPanel" style="display:none">
-      <h2>Elevator — 6 floors, 2 cars <span class="spacer"></span><span class="tag" id="elevTag">TTLC not running</span></h2>
-      <div id="elevSvg"></div>
-      <div class="hint">Buttons are momentary: they are pressed while you hold them. The indicators (and the cars) come from the TTLC's outputs,
-        refreshed live while it runs with the tick on. Hall calls on the left, each car's cabin panel beside its shaft.</div>
-    </div>
-
     <div class="panel">
       <h2>UART console
         <span class="spacer"></span>
@@ -320,8 +325,20 @@
         <div id="log" style="margin-top:8px"></div>
       </details>
     </div>
+
+    <div class="panel" id="elevPanel" style="display:none">
+      <h2>Elevator — 6 floors, 2 cars <span class="spacer"></span><span class="tag" id="elevTag">TTLC not running</span></h2>
+      <div id="elevSvg"></div>
+      <div class="hint">Buttons are momentary: they are pressed while you hold them. The indicators (and the cars) come from the TTLC's outputs,
+        refreshed live while it runs with the tick on. Hall calls on the left, each car's cabin panel beside its shaft.</div>
+    </div>
   </section>
 </main>
+
+<dialog id="srcDlg">
+  <div id="srcHead"><span id="srcTabs" style="display:flex;gap:6px;flex-wrap:wrap"></span><span class="spacer"></span><button class="mini" id="srcClose">Close</button></div>
+  <pre id="srcBody"></pre>
+</dialog>
 
 <footer>
   LISA (Little ISA) 8-bit microcontroller by Ken Pettit — <a href="https://github.com/kdp1965/tt07-um-lisa-ttlc">tt07-um-lisa-ttlc</a>.
@@ -1832,8 +1849,7 @@ function progress(done, total, what) {
 /* ---------------- TTLC panel ---------------- */
 
 const TTLC_LABELS = { 'ttlc_loopback.hex': 'I/O loopback: every scan copies inputs 0–47 to outputs 0–47',
-                      'elevator6x2.hex': 'Elevator controller: 6 floors, 2 cars (elevator6x2.asm, needs the tick)',
-                      'elevator_ctrl.hex': 'Elevator snippet (elevator_ctrl.asm)' };
+                      'elevator6x2.hex': 'Elevator controller: 6 floors, 2 cars (elevator6x2.asm, needs the tick)' };
 const ttlcSel = $('ttlcSel');
 for (const name of Object.keys(window.LISA_ASSETS.ttlc_firmware || {})) {
   const o = document.createElement('option');
@@ -1864,6 +1880,35 @@ const describeTtlcFw = fw => fw ? `${fw.name}: ${fw.words} instructions (${fw.by
 ttlcSel.addEventListener('change', selectTtlcFirmware);
 $('ttlcFile').addEventListener('change', selectTtlcFirmware);
 selectTtlcFirmware();
+
+// the assembly source of the selected program (and the headers it includes)
+function ttlcSourceFiles() {
+  const src = window.LISA_ASSETS.ttlc_sources || {};
+  const v = ttlcSel.value;
+  if (v === '__file') return [];
+  const asm = v.replace(/\.hex$/, '.asm');
+  if (!src[asm]) return [];
+  const files = [[asm, src[asm]]];
+  for (const m of src[asm].matchAll(/^\s*include\s*[<"]([^>"]+)[>"]/gm)) if (src[m[1]]) files.push([m[1], src[m[1]]]);
+  return files;
+}
+function updateSrcButton() { $('btnTtlcSrc').disabled = !ttlcSourceFiles().length; }
+ttlcSel.addEventListener('change', updateSrcButton);
+updateSrcButton();
+$('btnTtlcSrc').addEventListener('click', () => {
+  const files = ttlcSourceFiles();
+  if (!files.length) return;
+  const tabs = $('srcTabs'); tabs.innerHTML = '';
+  const show = i => {
+    [...tabs.children].forEach((t, k) => t.classList.toggle('on', k === i));
+    $('srcBody').textContent = files[i][1];
+    $('srcBody').scrollTop = 0;
+  };
+  files.forEach(([name], i) => { const t = document.createElement('span'); t.className = 'tab'; t.textContent = name; t.addEventListener('click', () => show(i)); tabs.appendChild(t); });
+  show(0);
+  $('srcDlg').showModal();
+});
+$('srcClose').addEventListener('click', () => $('srcDlg').close());
 
 function ttlcBase() {
   const t = $('ttlcBase').value.trim();
