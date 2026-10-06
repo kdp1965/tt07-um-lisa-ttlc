@@ -126,6 +126,20 @@
   .iogrid .inp:hover { border-color: rgba(255,255,255,.35); }
   .iogrid .inp.on { background: var(--accent); color: #fff; }
   .iolabel { font-size: 10.5px; color: var(--muted); margin-top: 8px; display: flex; justify-content: space-between; }
+  #elevPanel svg { width: 100%; height: auto; max-height: 470px; display: block; user-select: none; }
+  #elevPanel .btn { cursor: pointer; }
+  #elevPanel .btn circle, #elevPanel .btn rect.key { fill: #2a2a28; stroke: rgba(255,255,255,.18); transition: fill .1s; }
+  #elevPanel .btn:hover circle, #elevPanel .btn:hover rect.key { stroke: rgba(255,255,255,.5); }
+  #elevPanel .btn.lit circle, #elevPanel .btn.lit rect.key { fill: #fab219; stroke: #ffd36a; }
+  #elevPanel .btn.down circle, #elevPanel .btn.down rect.key { fill: var(--accent); stroke: #8ab9f0; }
+  #elevPanel .btn text { fill: var(--ink-2); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; }
+  #elevPanel .btn.lit text { fill: #111; }
+  #elevPanel .car { transition: transform .35s ease-in-out; }
+  #elevPanel .door { transition: transform .3s; }
+  #elevPanel .lamp { fill: #2a2a28; stroke: rgba(255,255,255,.12); }
+  #elevPanel .lamp.on { fill: #0ca30c; stroke: #7fd87f; }
+  #elevPanel .lbl { fill: var(--muted); font: 11px system-ui, sans-serif; }
+  #elevPanel .lbl.b { fill: var(--ink-2); font-weight: 600; }
   #term {
     font: 13.5px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     background: #050505; color: #d8d8d0; border: 1px solid var(--grid); border-radius: 8px;
@@ -280,6 +294,13 @@
   </aside>
 
   <section class="stage">
+    <div class="panel" id="elevPanel" style="display:none">
+      <h2>Elevator — 6 floors, 2 cars <span class="spacer"></span><span class="tag" id="elevTag">TTLC not running</span></h2>
+      <div id="elevSvg"></div>
+      <div class="hint">Buttons are momentary: they are pressed while you hold them. The indicators (and the cars) come from the TTLC's outputs,
+        refreshed live while it runs with the tick on. Hall calls on the left, each car's cabin panel beside its shaft.</div>
+    </div>
+
     <div class="panel">
       <h2>UART console
         <span class="spacer"></span>
@@ -1693,6 +1714,7 @@ function renderState(st) {
   st = st || cmdr.state();
   if (!st.connected || st.halted === false) $('disasm').textContent = '';
   if (!st.connected) { showTtlc(null); renderOutputs(0n); }
+  if (typeof renderElevTag === 'function') renderElevTag();
   const on = st.connected && st.pass && !busy;
   ['btnProgram', 'btnVerify', 'btnRun', 'btnHalt', 'btnResume', 'btnStep', 'btnReset', 'btnRegs', 'btnStack',
    'btnGrant', 'btnReclaim', 'btnReinit'].forEach(id => $(id).disabled = !on);
@@ -1864,7 +1886,10 @@ for (let i = 0; i < 48; i++) {
   $('ttlcIn').appendChild(b); inCells.push(b);
 }
 function renderInputs() { inCells.forEach((c, i) => c.classList.toggle('on', !!((ttlcInputs >> BigInt(i)) & 1n))); }
-function renderOutputs(v) { outCells.forEach((c, i) => c.classList.toggle('on', !!((v >> BigInt(i)) & 1n))); }
+function renderOutputs(v) {
+  outCells.forEach((c, i) => c.classList.toggle('on', !!((v >> BigInt(i)) & 1n)));
+  if ($('elevPanel').style.display !== 'none') elevView.update(v);
+}
 $('ttlcInClear').addEventListener('click', e => { e.preventDefault(); ttlcInputs = 0n; renderInputs(); pushInputs(); });
 const ttlcTickMs = () => Math.max(0, Math.min(60000, +$('ttlcTickMs').value || 0));
 $('ttlcTickMs').addEventListener('change', () => guarded('Setting tick…', async () => {
@@ -1892,6 +1917,121 @@ function showTtlc(st) {
   }).join('\n');
 }
 
+/* ---- the elevator picture (for elevator6x2.asm) ---- */
+
+// momentary buttons: pressed while held, with a minimum pulse so a quick click is seen
+const pressStarted = new Map();
+function pressInput(n, down) {
+  const bit = 1n << BigInt(n);
+  if (down) {
+    pressStarted.set(n, Date.now());
+    ttlcInputs |= bit;
+  } else {
+    const held = Date.now() - (pressStarted.get(n) || 0);
+    const release = () => { ttlcInputs &= ~bit; renderInputs(); pushInputs(); };
+    if (held < 120) { setTimeout(release, 120 - held); return; }
+    ttlcInputs &= ~bit;
+  }
+  renderInputs(); pushInputs();
+}
+
+function buildElevatorView(container) {
+  const FLOORS = 6, TOP = 28, FH = 56, SHAFT_W = 74, CAR_W = 52, CAR_H = 42;
+  const shaftX = [228, 318], panelX = [412, 528];
+  const floorY = f => TOP + (FLOORS - 1 - f) * FH;          // top of the floor band
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs = {}, text) => {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    if (text !== undefined) e.textContent = text;
+    return e;
+  };
+  const svg = el('svg', { viewBox: `0 0 640 ${TOP + FLOORS * FH + 22}` });
+  const buttons = new Map();                                  // input n -> group element
+  const button = (x, y, r, label, n, title) => {
+    const g = el('g', { class: 'btn', transform: `translate(${x},${y})` });
+    g.appendChild(el('title', {}, title));
+    g.appendChild(el('circle', { r }));
+    g.appendChild(el('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central' }, label));
+    g.addEventListener('pointerdown', e => { e.preventDefault(); g.classList.add('down'); pressInput(n, true); });
+    const up = () => { if (g.classList.contains('down')) { g.classList.remove('down'); pressInput(n, false); } };
+    g.addEventListener('pointerup', up); g.addEventListener('pointerleave', up); g.addEventListener('pointercancel', up);
+    svg.appendChild(g); buttons.set(n, g);
+    return g;
+  };
+
+  // floors: lines, labels, hall buttons
+  for (let f = 0; f < FLOORS; f++) {
+    const y = floorY(f);
+    svg.appendChild(el('line', { x1: 20, y1: y + FH - 1, x2: 620, y2: y + FH - 1, stroke: 'var(--grid)' }));
+    svg.appendChild(el('text', { x: 24, y: y + FH / 2, class: 'lbl b', 'dominant-baseline': 'central' }, `floor ${f}`));
+    // hall call buttons: up on floors 0-4 (inputs 0,1,3,5,7), down on floors 1-5 (inputs 2,4,6,8,9)
+    const upIn = { 0: 0, 1: 1, 2: 3, 3: 5, 4: 7 }[f], dnIn = { 1: 2, 2: 4, 3: 6, 4: 8, 5: 9 }[f];
+    if (upIn !== undefined) button(110, y + FH / 2, 11, '▲', upIn, `floor ${f}: call going up (input ${upIn})`);
+    if (dnIn !== undefined) button(142, y + FH / 2, 11, '▼', dnIn, `floor ${f}: call going down (input ${dnIn})`);
+  }
+  svg.appendChild(el('text', { x: 126, y: 14, class: 'lbl', 'text-anchor': 'middle' }, 'hall calls'));
+
+  // shafts, cars, doors, lamps, cabin panels
+  const cars = [];
+  for (let c = 0; c < 2; c++) {
+    const x = shaftX[c];
+    svg.appendChild(el('rect', { x, y: TOP - 4, width: SHAFT_W, height: FLOORS * FH + 6, rx: 6, fill: '#121211', stroke: 'var(--grid)' }));
+    svg.appendChild(el('text', { x: x + SHAFT_W / 2, y: 14, class: 'lbl b', 'text-anchor': 'middle' }, `car ${c + 1}`));
+    const car = el('g', { class: 'car' });
+    const cx = x + (SHAFT_W - CAR_W) / 2;
+    car.appendChild(el('rect', { x: cx, y: 0, width: CAR_W, height: CAR_H, rx: 4, fill: '#3a3a37', stroke: '#6a6a66' }));
+    const doorL = el('rect', { class: 'door', x: cx + 3, y: 3, width: CAR_W / 2 - 3, height: CAR_H - 6, fill: '#9a9a92' });
+    const doorR = el('rect', { class: 'door', x: cx + CAR_W / 2, y: 3, width: CAR_W / 2 - 3, height: CAR_H - 6, fill: '#9a9a92' });
+    car.appendChild(el('rect', { x: cx + 3, y: 3, width: CAR_W - 6, height: CAR_H - 6, fill: '#1c2a3a' }));   // the cabin behind the doors
+    car.appendChild(doorL); car.appendChild(doorR);
+    const lampUp = el('path', { class: 'lamp', d: `M${cx + 10},${-4} l6,-9 l6,9 z` });
+    const lampDn = el('path', { class: 'lamp', d: `M${cx + CAR_W - 22},${-13} l6,9 l6,-9 z` });
+    car.appendChild(lampUp); car.appendChild(lampDn);
+    svg.appendChild(car);
+    // cabin panel: floor buttons 5..0 in two columns
+    const px = panelX[c];
+    svg.appendChild(el('rect', { x: px - 8, y: TOP + 20, width: 92, height: 150, rx: 8, fill: '#161615', stroke: 'var(--grid)' }));
+    svg.appendChild(el('text', { x: px + 38, y: TOP + 10, class: 'lbl', 'text-anchor': 'middle' }, `cabin ${c + 1}`));
+    for (let f = 0; f < FLOORS; f++) {
+      const n = (c === 0 ? 10 : 16) + f;
+      button(px + 18 + (f % 2) * 40, TOP + 150 - Math.floor(f / 2) * 44, 14, String(f), n, `car ${c + 1} cabin: floor ${f} (input ${n})`);
+    }
+    cars.push({ car, doorL, doorR, lampUp, lampDn, cx, floor: -1 });
+  }
+
+  container.appendChild(svg);
+  return {
+    update(o) {                                               // o: BigInt of the 48 outputs
+      const bit = n => (o >> BigInt(n)) & 1n;
+      for (const [n, g] of buttons) g.classList.toggle('lit', !!bit(n));
+      cars.forEach((cr, c) => {
+        const pos = Number((o >> BigInt(32 + 6 * c)) & 0x3fn);
+        const f = pos ? Math.round(Math.log2(pos)) : -1;
+        if (f !== cr.floor) { cr.floor = f; cr.car.style.transform = `translateY(${f < 0 ? TOP + 5 * FH : floorY(f) + (FH - CAR_H) / 2}px)`; }
+        cr.car.style.opacity = f < 0 ? .35 : 1;
+        const open = !!bit(22 + c);
+        cr.doorL.style.transform = open ? 'translateX(-14px)' : ''; cr.doorR.style.transform = open ? 'translateX(14px)' : '';
+        cr.lampUp.classList.toggle('on', !!bit(24 + 2 * c)); cr.lampDn.classList.toggle('on', !!bit(25 + 2 * c));
+      });
+    },
+  };
+}
+const elevView = buildElevatorView($('elevSvg'));
+function showElevPanel() {
+  const on = ttlcSel.value === 'elevator6x2.hex';
+  $('elevPanel').style.display = on ? '' : 'none';
+  if (on) renderElevTag();
+}
+function renderElevTag() {
+  const st = cmdr.state();
+  const t = $('elevTag');
+  t.textContent = !st.connected ? 'not connected' : !st.ttlc.enabled ? 'TTLC not programmed' : (st.ttlc.tickMs ? `tick ${st.ttlc.tickMs} ms` : 'tick off');
+  t.className = 'tag' + (st.connected && st.ttlc.enabled && st.ttlc.tickMs ? ' run' : '');
+}
+ttlcSel.addEventListener('change', showElevPanel);
+showElevPanel();
+
 // live output refresh while the TTLC runs
 let polling = false;
 setInterval(async () => {
@@ -1900,7 +2040,7 @@ setInterval(async () => {
   polling = true;
   try { renderOutputs(await cmdr.ttlcOutputs()); } catch (e) { /* a transient collision; next tick */ }
   finally { polling = false; }
-}, 250);
+}, 200);
 
 $('btnTtlcProgram').addEventListener('click', () => {
   if (!currentTtlcFw) { log('choose a TTLC program first', 'err'); return; }

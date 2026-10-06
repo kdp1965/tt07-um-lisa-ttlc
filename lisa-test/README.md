@@ -100,8 +100,12 @@ each car is, 22/23 its door, 24–27 its direction. On every tick a car keeps it
 door open (two ticks), closes it, opens it because a request is at its floor
 (clearing that floor's indicators), or moves one floor toward the nearest
 pending request, continuing in its direction while something is ahead. Both cars
-answer hall calls; car 1 has priority where both stand. Click a hall call, watch
-both cars go, the first one to arrive clears it. `gen_elevator6x2.py` emits the
+answer hall calls; car 1 has priority where both stand. When this program is selected, a picture of the
+building appears in the right column: six floors, both shafts with the cars
+gliding between floors (doors open on dwell, direction lamps), hall-call
+buttons per floor and a cabin panel per car — all momentary buttons, lit from
+the TTLC's indicator outputs. Press a hall call, watch both cars go; the first
+one to arrive clears it. `gen_elevator6x2.py` emits the
 `.asm` (the two cars run identical logic on different addresses, and the
 MC14500B has no indirect addressing); `mc14500_as.py` now accepts the
 hardware's 12-bit addresses and comments inside `enum` blocks.
