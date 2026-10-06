@@ -221,6 +221,7 @@
         <div class="reg"><span>cond[1:0]</span><b id="rCond">—</b></div>
         <div class="reg"><span>opcode at PC</span><b id="rOp">—</b></div>
       </div>
+      <div class="mono" id="disasm" title="code around PC, read from the flash; ▶ marks PC"></div>
       <div class="actions" style="margin-top:10px">
         <button id="btnRegs" disabled>Read registers</button>
         <button id="btnStack" disabled title="Halt and dump the 128-byte data RAM (read through IX), with SP marked">RAM / stack</button>
@@ -239,7 +240,7 @@
         <button class="mini" id="btnClearTerm">Clear</button>
       </h2>
       <div id="term" tabindex="0" spellcheck="false"></div>
-      <div class="hint" id="termHint">Click the console to type. With the bring-up demo running, press <code>?</code> for the banner and <code>s</code> for a counter.
+      <div class="hint" id="termHint">Click the console to type. With the bring-up demo running, press <code>?</code> for the banner.
         When the debugger owns the UART you are typing debugger commands (<code>v</code>, <code>r02⏎</code>, <code>w020000⏎</code> …).</div>
     </div>
 
@@ -667,15 +668,19 @@ class LisaDebug {
   async setPC(v) { await this.ensureDebugger(); await this.writeReg(2, v); }
   async resetCore() { await this.ensureDebugger(); await this.send('t'); await sleep(20); await this.version(); }
 
-  // The opcode at `pc`, read from the flash through the debugger's QSPI port.
-  // (Register 0xf also holds an opcode, but every access to it advances PC by
-  // one - it is meant for loading programs - so it is never read here.)
-  async readOpcode(pc) {
-    await this.setDebugAddress(this.flashBase + 2 * pc);
-    const op = await this.readReg(0x20);
+  // `n` opcodes from `addr` on, read from the flash through the debugger's
+  // QSPI port (the address auto-increments per read).  Register 0xf also
+  // holds an opcode, but every access to it advances PC by one - it is meant
+  // for loading programs - so it is never read here.
+  async readProgram(addr, n) {
+    await this.setDebugAddress(this.flashBase + 2 * addr);
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(await this.readReg(0x20));
     await this.setDebugAddress(this.flashBase);
-    return op;
+    return out;
   }
+
+  async readOpcode(pc) { return (await this.readProgram(pc, 1))[0]; }
 
   async readRegs() {
     await this.ensureDebugger();
@@ -683,7 +688,12 @@ class LisaDebug {
     for (const [k, a] of [['status', 0], ['acc', 1], ['pc', 2], ['sp', 3], ['ra', 4], ['ix', 5]]) r[k] = await this.readReg(a);
     r.halted = !!(r.status & 1);
     r.zflag = (r.acc >> 8) & 1; r.cflag = (r.acc >> 9) & 1; r.cond = (r.acc >> 10) & 3; r.accVal = r.acc & 0xff;
-    r.op = r.halted ? await this.readOpcode(r.pc) : null;
+    r.op = null; r.code = null;
+    if (r.halted) {                       // a window of code around PC, for the disassembly
+      const start = Math.max(0, r.pc - 3), n = 8;
+      r.code = { start, words: await this.readProgram(start, n) };
+      r.op = r.code.words[r.pc - start];
+    }
     this.halted = r.halted;
     return r;
   }
@@ -722,6 +732,7 @@ class LisaDebug {
     if (t10 === 0b1000101100 || t10 === 0b1000101110) return [ra, seq]; // rc / rz
     if (t10 === 0b1000101101) return [seq];                            // rets returns to IA, which the debugger cannot read
     if (t11 === 0b10001010100 || t11 === 0b10001010101) return [ix, seq]; // call ix / jmp ix
+    if ((op >> 4) === 0xa18) return [(pc + 2) & 0x7fff];                // ldx: its operand is the next word
     return [seq];
   }
 
@@ -855,6 +866,125 @@ function parseFirmware(name, data) {
   if (bytes.length & 1) { const p = new Uint8Array(bytes.length + 1).fill(0xff); p.set(bytes); bytes = p; }
   if (bytes.length > 0x10000) throw new Error(`${name}: ${bytes.length} bytes, but LISA's program space is 64 KB (32K opcodes)`);
   return { name, bytes, format, words: bytes.length / 2 };
+}
+
+
+/* ---------------- disassembler ----------------
+   A port of DisassembleOpcode() from lisa_ide (src/Lisa.cxx), same mnemonics
+   and operand style; branch and jump targets are added since PC is known. */
+
+const COND_U = ['eq', 'ne', 'nc', 'c', 'gt', 'lt', 'gte', 'lte'];
+const COND_S = ['eq', 'ne', 'nc', 'c', 'gts', 'lts', 'gtes', 'ltes'];
+const DIV_SFX = ['ii', 'ic', 'ci', 'cc'];
+const s8 = v => (v & 0xff) << 24 >> 24;
+const chr = v => (v >= 0x20 && v <= 0x7e) ? `  '${String.fromCharCode(v)}'` : '';
+const fmt = (m, args = '') => m.padEnd(10) + args;
+
+function disassemble(op, pc = 0) {
+  op &= 0xffff;
+  const imm8 = op & 0xff;
+  if (!(op & 0x8000)) return fmt('jal', '0x' + hex4(op & 0x7fff));          // 0aaa aaaa aaaa aaaa
+
+  if (!(op & 0x4000)) {                                                       // 10xx ....
+    const sub = (op >> 10) & 0xf;
+    const idx = (o) => `${o & 0x7f}(${(o >> 7) & 1 ? 'sp' : 'ix'})`;
+    switch (sub) {
+      case 0x0: return fmt('ldi', imm8 + chr(imm8));
+      case 0x1: return fmt('mulu', idx(op));
+      case 0x2: {
+        const bits = (op >> 7) & 7;
+        if (bits === 4) return 'ret';
+        if (bits === 6) return op & 0x40 ? 'rets' : 'rc';
+        if (bits === 7) return 'rz';
+        if (bits === 5) {
+          const tail = (op >> 2) & 0xff;
+          return { 0xa0: 'call_ix', 0xa8: 'jmp_ix', 0xb0: 'xchg_ra', 0xb1: 'xchg_ia', 0xb2: 'xchg_sp',
+                   0xb3: 'spix', 0xb4: fmt('cpx', 'ra'), 0xb6: fmt('cpx', 'sp') }[tail] || 'unknown';
+        }
+        return 'unknown';
+      }
+      case 0x3: return fmt('reti', String(imm8).padEnd(3) + chr(imm8));
+      case 0x4: return fmt('adc', imm8);
+      case 0x5: return fmt('ads', s8(op));
+      case 0x6: return fmt('adx', s8(op));
+      case 0x7: return fmt('dcx', idx(op));
+      case 0x8: {
+        const bits = (op >> 2) & 0xff;
+        const exact = { 0x00: 'shl', 0x01: 'shr', 0x1c: 'nop', 0x1d: 'notz', 0x1f: 'brk', 0x20: 'push_a', 0x30: 'pop_a',
+                        0x58: 'sra', 0x59: 'lra', 0x5a: 'push_ix', 0x5b: 'pop_ix', 0x5c: 'lddiv', 0x5e: 'savec',
+                        0x5f: 'restc', 0x60: 'ldx', 0x69: 'addaxu', 0x6b: 'subaxu' }[bits];
+        if (exact) return exact;
+        if (bits === 0x50) return fmt('amode', op & 3);
+        if (bits >= 0x79 && bits <= 0x7e)
+          return fmt(['', 'fmul', 'fadd', 'fneg', 'fswap', 'fcmp', 'fdiv'][bits & 7], `f(${op & 3})`);
+        switch (bits & 0xfc) {
+          case 0x00: return fmt('ldc', op & 1);
+          case 0x04: return op & 2 ? 'txau' : 'txa';
+          case 0x08: return fmt('shl16', op & 3);
+          case 0x0c: return fmt('shr16', op & 3);
+          case 0x10: return fmt('btst', op & 7);
+          case 0x18: return fmt('ldz', op & 1);
+          case 0x40: return op & 2 ? 'taxu' : 'tax';
+          case 0x68: case 0x6c: return (bits & 2 ? 'sub' : 'add') + 'ax' + (bits & 4 ? ' c' : '');
+          case 0x70: case 0x74: return fmt('ldac', COND_U[op & 7].toUpperCase());
+          case 0x78: return (op & 2 ? 'taf' : 'tfa') + (op & 1 ? 'c' : '');
+          case 0xc0: return fmt('div', DIV_SFX[op & 3]);
+          case 0xc4: return fmt('rem', DIV_SFX[op & 3]);
+          case 0xc8: return ['itof', 'ftoi', 'fclr', 'unknown'][op & 3];
+        }
+        if (bits >= 0x80 && bits <= 0xbf) {                                   // if / iftt / ifte
+          const cond = ((op >> 6) & 1 ? COND_S : COND_U)[op & 7];
+          return fmt(['if', 'iftt', 'ifte', 'if?'][(op >> 3) & 3], cond);
+        }
+        return 'unknown';
+      }
+      case 0x9: return fmt('cpi', s8(op) + chr(imm8));
+      default: {                                                              // 0xa-0xf: bnz / br / bz
+        const off = (op & 0x7ff) << 21 >> 21;
+        const mnem = ['???', 'bnz', 'br', 'bz'][(sub >> 1) & 3];
+        return fmt(mnem, (off >= 0 ? '+' : '') + off + `  → 0x${hex4((pc + off) & 0x7fff)}`);
+      }
+    }
+  }
+
+  const main = (op >> 10) & 0xf, imm9 = op & 0x1ff;                          // 11xx ....
+  const idx9 = `${imm9}(${(op >> 9) & 1 ? 'sp' : 'ix'})`;
+  switch (main) {
+    case 0x0: return fmt('add', idx9);
+    case 0x1: return fmt('mul', idx9);
+    case 0x2: return fmt('sub', idx9);
+    case 0x3: return fmt((op >> 9) & 1 ? 'stxx' : 'ldxx', imm9);
+    case 0x4: return fmt('and', idx9);
+    case 0x5: return fmt('andi', imm8);
+    case 0x6: return fmt('or', idx9);
+    case 0x7: return fmt('swapi', imm9);
+    case 0x8: return fmt('xor', idx9);
+    case 0x9: return fmt('inx', idx9);
+    case 0xa: return fmt('cmp', idx9);
+    case 0xb: return fmt('swap', idx9);
+    case 0xc: return fmt('ldax', idx9);
+    case 0xd: return fmt('lda', imm9);
+    case 0xe: return fmt('stax', idx9);
+    default:  return fmt('sta', imm9);
+  }
+}
+
+// Lines for a code window: ldx shows its operand (the following word), and
+// that word is marked as data rather than decoded as an instruction.
+function disassembleWindow(words, start) {
+  const lines = [];
+  let operandOf = null;
+  for (let i = 0; i < words.length; i++) {
+    const addr = start + i, word = words[i];
+    let text;
+    if (operandOf !== null) { text = `(operand of the ldx at 0x${hex4(operandOf)})`; operandOf = null; }
+    else if ((word >> 4) === 0xa18) {
+      text = fmt('ldx', i + 1 < words.length ? '0x' + hex4(words[i + 1] & 0x7fff) : '…');
+      operandOf = addr;
+    } else text = disassemble(word, addr);
+    lines.push({ addr, word, text });
+  }
+  return lines;
 }
 
 /* ---------------- the whole flow ---------------- */
@@ -1145,7 +1275,7 @@ class LisaCommander {
 const fmtHz = hz => !hz ? 'stopped' : hz >= 1e6 ? (hz / 1e6).toFixed(hz % 1e6 ? 2 : 0) + ' MHz'
   : hz >= 1e3 ? (hz / 1e3).toFixed(1) + ' kHz' : hz + ' Hz';
 
-root.LisaCore = { LisaCommander, LisaDebug, MpBoard, SerialLink, RxBuffer, parseFirmware, toWords, hex2, hex4, hex6, fmtHz, T, CODE };
+root.LisaCore = { LisaCommander, LisaDebug, MpBoard, SerialLink, RxBuffer, parseFirmware, toWords, disassemble, disassembleWindow, hex2, hex4, hex6, fmtHz, T, CODE };
 
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
@@ -1155,7 +1285,7 @@ root.LisaCore = { LisaCommander, LisaDebug, MpBoard, SerialLink, RxBuffer, parse
 /* ====================================================================
    UI glue: DOM, the console terminal, buttons.
    ==================================================================== */
-const { LisaCommander, parseFirmware, hex2, hex4, hex6, fmtHz } = window.LisaCore;
+const { LisaCommander, parseFirmware, disassembleWindow, hex2, hex4, hex6, fmtHz } = window.LisaCore;
 const $ = id => document.getElementById(id);
 const enc = new TextEncoder();
 
@@ -1280,6 +1410,7 @@ function setStatus(text, cls) { const el = $('status'); el.textContent = text; e
 
 function renderState(st) {
   st = st || cmdr.state();
+  if (!st.connected || st.halted === false) $('disasm').textContent = '';
   const on = st.connected && st.pass && !busy;
   ['btnProgram', 'btnVerify', 'btnRun', 'btnHalt', 'btnResume', 'btnStep', 'btnReset', 'btnRegs', 'btnStack',
    'btnGrant', 'btnReclaim', 'btnReinit'].forEach(id => $(id).disabled = !on);
@@ -1450,6 +1581,9 @@ function showRegs(r) {
   $('rPC').textContent = hex4(r.pc); $('rSP').textContent = hex4(r.sp); $('rRA').textContent = hex4(r.ra); $('rIX').textContent = hex4(r.ix);
   $('rACC').textContent = hex2(r.accVal); $('rFlags').textContent = `${r.zflag} ${r.cflag}`;
   $('rCond').textContent = r.cond.toString(2).padStart(2, '0'); $('rOp').textContent = r.op === null ? '—' : hex4(r.op);
+  // disassembly of the code around PC (only meaningful while halted)
+  $('disasm').textContent = !r.code ? '' : disassembleWindow(r.code.words, r.code.start)
+    .map(l => `${l.addr === r.pc ? '▶' : ' '} ${hex4(l.addr)}: ${hex4(l.word)}  ${l.text}`).join('\n');
 }
 
 $('btnConnect').addEventListener('click', doConnect);

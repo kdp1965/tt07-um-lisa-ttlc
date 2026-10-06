@@ -131,6 +131,12 @@ try {
       await cmdr.reset();
       const r5 = await cmdr.readRegs();
       check(r5.pc === 0, `reset: PC ${r5.pc}`);
+      // from reset: br +8 -> ldx (two words) -> xchg_sp; the step must skip ldx's operand word
+      const pcs = []; for (let i = 0; i < 3; i++) pcs.push((await cmdr.step()).pc);
+      check(pcs.join() === '8,10,11', `steps from reset land at ${pcs.map(p => p.toString(16)).join(' ')} (br, ldx+operand, xchg_sp)`);
+      const r6 = await cmdr.readRegs();
+      check(r6.code && r6.code.words.length === 8, 'code window read: ' + globalThis.LisaCore.disassembleWindow(r6.code.words, r6.code.start).map(l => l.text.trim()).join(' | '));
+      await cmdr.reset();
       consoleBuf = '';
       await cmdr.resume();
       await cmdr.consoleSend(new TextEncoder().encode('?'));
