@@ -84,7 +84,7 @@ def setaddr(a):
     wreg(0x10, a & 0xffff)
 
 
-def setup(clkdiv=3, cedelay=127, mode=1):
+def setup(clkdiv=1, cedelay=127, mode=1):
     _select()
     print('debugger:', _debugger())
     print('sim ram:', rp2.enable_sim_spi_ram(), len(rp2.sim_spi_ram()))

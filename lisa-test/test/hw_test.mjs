@@ -13,7 +13,9 @@
 // "ALL PASSED" or "SOME FAILED" (the lisa-tools/sdcc_test programs), e.g.
 //   node hw_test.mjs connect ihx=../../../lisa-tools/sdcc_test/test_core.ihx disconnect
 // "spiram=<file>" does the same with the data cache on the RP2040's emulated
-// SPI RAM (needs the mbell_micropython lisa_spi_ram build on the board).
+// SPI RAM (needs the mbell_micropython lisa_spi_ram build on the board);
+// "monitor=<file>" starts a program that way and leaves the console on the
+// bridge for a terminal (lisa-tools/lisa_monitor).
 import fs from 'node:fs';
 import net from 'node:net';
 import vm from 'node:vm';
@@ -126,19 +128,33 @@ try {
       const out = await waitConsole(/ALL PASSED|SOME FAILED/, 20000);
       console.log(out.replace(/\r/g, ''));
       check(/ALL PASSED/.test(out), `${path.basename(file)} reports ALL PASSED on the chip`);
-    } else if (sc.startsWith('spiram=')) {
+    } else if (sc.startsWith('spiram=') || sc.startsWith('monitor=')) {
       // like ihx=, with the data cache on the RP2040's emulated SPI RAM (the
       // mbell_micropython lisa_spi_ram build: rp2.enable_sim_spi_ram): CE1 on
       // uio[4], CS1 plain SPI with 16-bit addresses in SPI mode 1, the
-      // debugger's QSPI port on CS1 for a pattern check, then the cache on
-      const [file, mhz] = sc.slice(7).split('@');       // spiram=<file>[@<project MHz>]
+      // debugger's QSPI port on CS1 for a pattern check, then the cache on.
+      // "monitor=<file>" starts an interactive program the same way and
+      // leaves the console attached to the bridge (socat/nc to port 5555).
+      const monitor = sc.startsWith('monitor=');
+      // <file>[@<project MHz>][,<reg>=<value>...], e.g. spiram=t.ihx,0x1e=0x1ff1
+      // overrides a register below (0x1e: spi_mode[12:11], ce_delay[10:4], clk_div[3:0])
+      const [spec, ...overrides] = sc.slice(sc.indexOf('=') + 1).split(',');
+      const [file, mhz] = spec.split('@');
       const prog = parseFirmware(path.basename(file), fs.readFileSync(file));
       check(prog.format === 'Intel HEX', `${file}: ${prog.words} words`);
       await cmdr.programDirect(prog.bytes, 0, () => {});
       if (mhz) await cmdr.lisa.sideband(`tt.clock_project_PWM(${Math.round(+mhz * 1e6)}); print("@ok=1")`);
       const { r } = await cmdr.lisa.sideband('import rp2; print("@ok=%d" % rp2.enable_sim_spi_ram())');
       check(r.ok === '1', 'simulated SPI RAM enabled on the RP2040');
-      const regs = [[0x1c, 0x0003], [0x17, 0x0024], [0x1e, 0x1ff3], [0x16, 0x0002]];
+      // 0x1e: SPI mode 1, CE delay 127, SCLK clk/4 (12.5 MHz at 50 MHz); clk/2
+      // fails the emulator and a CE delay of 64 or less garbles commands
+      const regs = [[0x1c, 0x0003], [0x17, 0x0024], [0x1e, 0x1ff1], [0x16, 0x0002]];
+      for (const o of overrides) {
+        const [a, v] = o.split('=').map(Number);
+        const reg = regs.find(([ra]) => ra === a);
+        check(reg !== undefined, `register 0x${a.toString(16)} = 0x${v.toString(16)} (override)`);
+        reg[1] = v;
+      }
       for (const [a, v] of regs) await cmdr.lisa.writeReg(a, v);
       for (const [a, v] of regs) check((await cmdr.lisa.readReg(a)) === v, `register 0x${a.toString(16)} = 0x${v.toString(16)}`);
       await cmdr.lisa.setDebugAddress(0x1000);
@@ -155,6 +171,11 @@ try {
       check(((await cmdr.lisa.readReg(0x1d)) & 0x7) === 0x3, 'data cache enabled on CS1');
       consoleBuf = '';
       await cmdr.run();
+      if (monitor) {
+        log(`${path.basename(file)} is running with the data cache on the SPI RAM; the console stays on the bridge:`);
+        log('    socat -,raw,echo=0 TCP:localhost:5555      (or: nc localhost 5555; press Enter for the banner)');
+        process.exit(0);
+      }
       let out;
       try {
         out = await waitConsole(/ALL PASSED|SOME FAILED/, 60000);
