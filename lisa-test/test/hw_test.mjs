@@ -12,6 +12,8 @@
 // programs any Intel HEX file, runs it and waits for it to print
 // "ALL PASSED" or "SOME FAILED" (the lisa-tools/sdcc_test programs), e.g.
 //   node hw_test.mjs connect ihx=../../../lisa-tools/sdcc_test/test_core.ihx disconnect
+// "spiram=<file>" does the same with the data cache on the RP2040's emulated
+// SPI RAM (needs the mbell_micropython lisa_spi_ram build on the board).
 import fs from 'node:fs';
 import net from 'node:net';
 import vm from 'node:vm';
@@ -57,7 +59,7 @@ const cmdr = new LisaCommander({ assets: globalThis.LISA_ASSETS, log, onConsole:
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function waitConsole(re, timeout = 3000) {
   const t = Date.now();
-  while (!re.test(consoleBuf)) { if (Date.now() - t > timeout) throw new Error(`console never matched ${re}; have ${JSON.stringify(consoleBuf.slice(-200))}`); await sleep(20); }
+  while (!re.test(consoleBuf)) { if (Date.now() - t > timeout) throw new Error(`console never matched ${re}; have ${JSON.stringify(consoleBuf.slice(0, 300))} ... ${JSON.stringify(consoleBuf.slice(-120))}`); await sleep(20); }
   return consoleBuf;
 }
 const check = (cond, msg) => { if (!cond) throw new Error('CHECK FAILED: ' + msg); console.log(`${stamp()} OK ${msg}`); };
@@ -124,6 +126,53 @@ try {
       const out = await waitConsole(/ALL PASSED|SOME FAILED/, 20000);
       console.log(out.replace(/\r/g, ''));
       check(/ALL PASSED/.test(out), `${path.basename(file)} reports ALL PASSED on the chip`);
+    } else if (sc.startsWith('spiram=')) {
+      // like ihx=, with the data cache on the RP2040's emulated SPI RAM (the
+      // mbell_micropython lisa_spi_ram build: rp2.enable_sim_spi_ram): CE1 on
+      // uio[4], CS1 plain SPI with 16-bit addresses in SPI mode 1, the
+      // debugger's QSPI port on CS1 for a pattern check, then the cache on
+      const [file, mhz] = sc.slice(7).split('@');       // spiram=<file>[@<project MHz>]
+      const prog = parseFirmware(path.basename(file), fs.readFileSync(file));
+      check(prog.format === 'Intel HEX', `${file}: ${prog.words} words`);
+      await cmdr.programDirect(prog.bytes, 0, () => {});
+      if (mhz) await cmdr.lisa.sideband(`tt.clock_project_PWM(${Math.round(+mhz * 1e6)}); print("@ok=1")`);
+      const { r } = await cmdr.lisa.sideband('import rp2; print("@ok=%d" % rp2.enable_sim_spi_ram())');
+      check(r.ok === '1', 'simulated SPI RAM enabled on the RP2040');
+      const regs = [[0x1c, 0x0003], [0x17, 0x0024], [0x1e, 0x1ff3], [0x16, 0x0002]];
+      for (const [a, v] of regs) await cmdr.lisa.writeReg(a, v);
+      for (const [a, v] of regs) check((await cmdr.lisa.readReg(a)) === v, `register 0x${a.toString(16)} = 0x${v.toString(16)}`);
+      await cmdr.lisa.setDebugAddress(0x1000);
+      const pat = [0x1234, 0xa55a, 0x0000, 0xffff, 0x8001, 0x7ffe];
+      for (const w of pat) await cmdr.lisa.writeReg(0x20, w);
+      await cmdr.lisa.setDebugAddress(0x1000);
+      const got = [];
+      for (let i = 0; i < pat.length; i++) got.push(await cmdr.lisa.readReg(0x20));
+      check(got.join() === pat.join(), `SPI RAM pattern through the debugger: ${got.map(v => v.toString(16)).join(' ')}`);
+      const ce = await cmdr.lisa.readReg(0x15);
+      await cmdr.lisa.writeReg(0x15, (ce & 0xfffc) | 2);     // the data cache (lisa2) on CS1
+      await cmdr.lisa.writeReg(0x1d, 0x0013);                // invalidate it, cache on, 32K map
+      await cmdr.lisa.writeReg(0x16, 0x0001);                // the debugger back on the flash
+      check(((await cmdr.lisa.readReg(0x1d)) & 0x7) === 0x3, 'data cache enabled on CS1');
+      consoleBuf = '';
+      await cmdr.run();
+      let out;
+      try {
+        out = await waitConsole(/ALL PASSED|SOME FAILED/, 60000);
+      } catch (e) {
+        // hung: is LISA still talking to the RAM?
+        for (let k = 0; k < 3; k++) {
+          const { r: rp } = await cmdr.lisa.sideband('import rp2; print("@rep=%d,%d,%d" % rp2.report_sim_spi_ram())');
+          log(`SPI RAM counters ${rp.rep}`, 'dim');
+          await sleep(500);
+        }
+        throw e;
+      }
+      console.log(out.replace(/\r/g, ''));
+      const { r: rep } = await cmdr.lisa.sideband('import rp2; print("@rep=%d,%d,%d" % rp2.report_sim_spi_ram())');
+      log(`SPI RAM saw ${rep.rep} (commands, last, unknown)`, 'dim');
+      check(/ALL PASSED/.test(out), `${path.basename(file)} reports ALL PASSED on the chip with the data cache on the SPI RAM`);
+      await cmdr.lisa.halt();
+      await cmdr.lisa.writeReg(0x1d, 0x0007);                // cache off again
     } else if (sc === 'verify') {
       let t = Date.now();
       let bad = await cmdr.verifyViaLisa(fw.bytes, 0);
