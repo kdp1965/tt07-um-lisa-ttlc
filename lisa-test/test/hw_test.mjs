@@ -153,30 +153,26 @@ try {
       check(prog.format === 'Intel HEX', `${file}: ${prog.words} words`);
       await cmdr.programDirect(prog.bytes, 0, () => {});
       if (mhz) await cmdr.lisa.sideband(`tt.clock_project_PWM(${Math.round(+mhz * 1e6)}); print("@ok=1")`);
-      const { r } = await cmdr.lisa.sideband('import rp2; print("@ok=%d" % rp2.enable_sim_spi_ram())');
-      check(r.ok === '1', 'simulated SPI RAM enabled on the RP2040');
-      // 0x1e: SPI mode 1, CE delay 127, SCLK clk/4 (12.5 MHz at 50 MHz); clk/2
-      // fails the emulator and a CE delay of 64 or less garbles commands
-      const regs = [[0x1c, 0x0003], [0x17, 0x0024], [0x1e, 0x1ff1], [0x16, 0x0002]];
-      for (const o of overrides) {
-        const [a, v] = o.split('=').map(Number);
-        const reg = regs.find(([ra]) => ra === a);
-        check(reg !== undefined, `register 0x${a.toString(16)} = 0x${v.toString(16)} (override)`);
-        reg[1] = v;
+      if (overrides.length) {
+        // the app's spiRamCache with other register values (0x1e: spi_mode[12:11], ce_delay[10:4], clk_div[3:0])
+        const { r } = await cmdr.lisa.sideband('import rp2; print("@ok=%d" % rp2.enable_sim_spi_ram())');
+        check(r.ok === '1', 'simulated SPI RAM enabled on the RP2040');
+        const regs = [[0x1c, 0x0003], [0x17, 0x0024], [0x1e, 0x1ff1], [0x16, 0x0002]];
+        for (const o of overrides) {
+          const [a, v] = o.split('=').map(Number);
+          const reg = regs.find(([ra]) => ra === a);
+          check(reg !== undefined, `register 0x${a.toString(16)} = 0x${v.toString(16)} (override)`);
+          reg[1] = v;
+        }
+        for (const [a, v] of regs) await cmdr.lisa.writeReg(a, v);
+        for (const [a, v] of regs) check((await cmdr.lisa.readReg(a)) === v, `register 0x${a.toString(16)} = 0x${v.toString(16)}`);
+        const ce = await cmdr.lisa.readReg(0x15);
+        await cmdr.lisa.writeReg(0x15, (ce & 0xfffc) | 2);     // the data cache (lisa2) on CS1
+        await cmdr.lisa.writeReg(0x1d, 0x0013);                // invalidate it, cache on, 32K map
+        await cmdr.lisa.writeReg(0x16, 0x0001);                // the debugger back on the flash
+      } else {
+        await cmdr.spiRamCache(true);                          // what the app does for a --tt07-cache image
       }
-      for (const [a, v] of regs) await cmdr.lisa.writeReg(a, v);
-      for (const [a, v] of regs) check((await cmdr.lisa.readReg(a)) === v, `register 0x${a.toString(16)} = 0x${v.toString(16)}`);
-      await cmdr.lisa.setDebugAddress(0x1000);
-      const pat = [0x1234, 0xa55a, 0x0000, 0xffff, 0x8001, 0x7ffe];
-      for (const w of pat) await cmdr.lisa.writeReg(0x20, w);
-      await cmdr.lisa.setDebugAddress(0x1000);
-      const got = [];
-      for (let i = 0; i < pat.length; i++) got.push(await cmdr.lisa.readReg(0x20));
-      check(got.join() === pat.join(), `SPI RAM pattern through the debugger: ${got.map(v => v.toString(16)).join(' ')}`);
-      const ce = await cmdr.lisa.readReg(0x15);
-      await cmdr.lisa.writeReg(0x15, (ce & 0xfffc) | 2);     // the data cache (lisa2) on CS1
-      await cmdr.lisa.writeReg(0x1d, 0x0013);                // invalidate it, cache on, 32K map
-      await cmdr.lisa.writeReg(0x16, 0x0001);                // the debugger back on the flash
       check(((await cmdr.lisa.readReg(0x1d)) & 0x7) === 0x3, 'data cache enabled on CS1');
       consoleBuf = '';
       await cmdr.run();

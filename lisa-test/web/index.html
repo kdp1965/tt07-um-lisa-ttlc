@@ -208,6 +208,9 @@
       <div class="field" id="fwFileRow" style="margin-top:8px;display:none"><span>file (one 4-digit hex opcode per line, <code>@addr</code> + hex bytes, or raw .bin)</span>
         <input type="file" id="fwFile"></div>
       <div class="hint" id="fwInfo">—</div>
+      <div class="checkrow" style="margin-top:8px"><input type="checkbox" id="spiRam">
+        <label for="spiRam">Data cache on the RP2040's SPI RAM (a 32K data space: programs built with <code>--tt07-cache</code>)</label></div>
+      <div class="hint" style="margin:0 0 0 23px">Needs the <code>lisa_spi_ram</code> MicroPython build on the board; set up after programming, before the run.</div>
 
       <div style="margin-top:12px">
         <div class="checkrow"><input type="radio" name="method" id="mDirect" value="direct" checked>
@@ -1597,6 +1600,42 @@ class LisaCommander {
     await this.lisa.grant();
     this._changed();
   }
+  // The data cache on the RP2040's emulated SPI RAM (the mbell_micropython
+  // lisa_spi_ram build: rp2.enable_sim_spi_ram): CE1 on uio[4], CS1 plain SPI
+  // with 16-bit addresses in SPI mode 1 (0x1e: SPI mode 1, CE delay 127, SCLK
+  // clk/4 - clk/2 fails the emulator and a CE delay of 64 or less garbles its
+  // commands), a pattern check through the debugger's QSPI port on CS1, then
+  // the cache on.  Programming re-initializes LISA, which turns it off again.
+  async spiRamCache(on) {
+    if (!on) {
+      await this.lisa.writeReg(0x1d, 0x0007);
+      this.log('data cache off: the 128-byte RAM is the data space');
+      return;
+    }
+    const { r } = await this.lisa.sideband('import rp2; print("@ok=%d" % rp2.enable_sim_spi_ram())');
+    if (r.ok !== '1') throw new Error("no SPI RAM emulation: the board needs the lisa_spi_ram MicroPython build (rp2.enable_sim_spi_ram)");
+    const regs = [[0x1c, 0x0003], [0x17, 0x0024], [0x1e, 0x1ff1], [0x16, 0x0002]];
+    for (const [a, v] of regs) await this.lisa.writeReg(a, v);
+    for (const [a, v] of regs) {
+      const got = await this.lisa.readReg(a);
+      if (got !== v) throw new Error(`register 0x${hex2(a)} reads back 0x${hex4(got)}, expected 0x${hex4(v)}`);
+    }
+    await this.lisa.setDebugAddress(0x1000);
+    const pat = [0x1234, 0xa55a, 0x0000, 0xffff, 0x8001, 0x7ffe];
+    for (const w of pat) await this.lisa.writeReg(0x20, w);
+    await this.lisa.setDebugAddress(0x1000);
+    const got = [];
+    for (let i = 0; i < pat.length; i++) got.push(await this.lisa.readReg(0x20));
+    if (got.join() !== pat.join())
+      throw new Error(`the SPI RAM does not answer: wrote ${pat.map(hex4).join(' ')}, read back ${got.map(hex4).join(' ')}`);
+    const ce = await this.lisa.readReg(0x15);
+    await this.lisa.writeReg(0x15, (ce & 0xfffc) | 2);     // the data cache (lisa2) on CS1
+    await this.lisa.writeReg(0x1d, 0x0013);                // invalidate it, cache on, 32K map
+    await this.lisa.writeReg(0x16, 0x0001);                // the debugger back on the flash
+    if (((await this.lisa.readReg(0x1d)) & 0x7) !== 0x3) throw new Error('the data cache did not come on');
+    this.log("data cache on: the 32K data space is the RP2040's SPI RAM on CS1", 'ok');
+  }
+
   async halt()   { await this.lisa.halt(); this._changed(); }
   async resume() { await this.lisa.resume(); await this.lisa.grant(); this._changed(); }
   async step()   { const st = await this.lisa.step(); const r = await this.lisa.readRegs(); this._changed(); return { ...r, step: st }; }
@@ -1824,7 +1863,10 @@ async function guarded(label, fn) {
 /* ---------------- firmware selection ---------------- */
 
 const DEMO_LABELS = { bringup_tt07: 'Bring-up demo for TT07 (banner on "?")', bringup_tt06: 'Bring-up demo for TT06 (banner on "?")',
-                      'sdcc_hello.ihx': 'Bring-up demo in C, sdcc -mlisa (banner on "?", count/sum on "s")' };
+                      'sdcc_hello.ihx': 'Bring-up demo in C, sdcc -mlisa (banner on "?", count/sum on "s")',
+                      'lisa_monitor.ihx': 'LISA monitor, sdcc -mlisa --tt07-cache (Enter for the banner, then "help"; mr, mw, stack, free, calc)' };
+// images that run with the data cache on the RP2040's SPI RAM (built with --tt07-cache)
+const NEEDS_CACHE = { 'lisa_monitor.ihx': true };
 const fwSel = $('fwSel');
 for (const name of Object.keys(window.LISA_ASSETS.firmware)) {
   const o = document.createElement('option');
@@ -1843,6 +1885,7 @@ function selectFirmware() {
   $('fwFileRow').style.display = v === '__file' ? '' : 'none';
   currentFw = null;
   if (v !== '__file') {
+    $('spiRam').checked = !!NEEDS_CACHE[v];
     try { currentFw = parseFirmware(v, enc.encode(window.LISA_ASSETS.firmware[v])); }
     catch (e) { log(String(e.message || e), 'err'); }
   } else if ($('fwFile').files[0]) {
@@ -2210,6 +2253,7 @@ async function doProgram() {
     else await cmdr.programViaLisa(fw.bytes, base, (d, t) => progress(d, t, 'programming'));
     log(`programmed and verified ${fw.words} opcodes in ${((performance.now() - t0) / 1000).toFixed(1)} s`, 'ok');
     progress(fw.words, fw.words, 'done');
+    if ($('spiRam').checked) await cmdr.spiRamCache(true);        // the re-initialization above left it off
     if ($('autoRun').checked) { await cmdr.run(); log('running: the console is attached to LISA\'s UART'); $('term').focus(); }
   });
 }
