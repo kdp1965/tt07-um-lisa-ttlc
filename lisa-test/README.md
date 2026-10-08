@@ -310,6 +310,18 @@ while the TTLC scans, and the elevator controller (via LISA at 0x20000); the
 `elevator` scenario rides it with a fast tick. It overwrites the first three
 64 KB blocks of the flash.
 
+`ihx=<file>` programs an `sdcc -mlisa` program directly and waits for its
+`ALL PASSED` / `SOME FAILED` (the `lisa-tools/sdcc_test` suites); `spiram=`
+and `monitor=` do the same with the data cache on the RP2040's emulated SPI
+RAM. `clock=<MHz>[/<RP2040 MHz>]` before `connect` runs the project at that
+clock instead of the SDK's 50 MHz: `lisa_select` raises the RP2040 to twice
+the project clock (its PWM reaches half its system clock; an even divider
+gives a clean 50 % clock) unless told which, re-creates its UART and resets
+LISA so the autobaud measures anew. The TT07 LISA passes every suite at
+66 MHz and its debugger no longer answers from 67 MHz up (2026-10-08); its
+TIMER1 counts core clocks, so a benchmark's ticks come out the same at any
+clock - the chip scales with it.
+
 ## Publishing
 
 `.github/workflows/pages.yaml` deploys `lisa-test/web` as this repository's

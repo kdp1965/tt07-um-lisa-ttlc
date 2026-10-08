@@ -72,11 +72,20 @@ const alt = Uint8Array.from(fw.bytes);
 { const w = globalThis.LisaCore.toWords(fw.bytes); const i = w.findIndex((v, k) => v === 0x8041 && w[k + 2] === 0x8021); alt[2 * (i + 2)] = 0x2a; }
 
 const scenarios = process.argv.slice(2).length ? process.argv.slice(2) : ['connect', 'direct', 'vialisa', 'verify', 'debug', 'ttlc', 'tick', 'elevator', 'disconnect'];
+// "clock=<MHz>[/<RP2040 MHz>]" before "connect": the project clock to run at
+// instead of the SDK's 50 MHz (lisa_select raises the RP2040 to twice it for
+// its PWM, or to the system clock given)
+let clockHz = 0, sysclkHz = 0;
 try {
   for (const sc of scenarios) {
     console.log(`\n===== ${sc} =====`);
-    if (sc === 'connect') {
-      await cmdr.connect(new TcpSerialPort());
+    if (sc.startsWith('clock=')) {
+      const [c, s] = sc.slice(6).split('/');
+      clockHz = Math.round(+c * 1e6);
+      sysclkHz = s ? Math.round(+s * 1e6) : 0;
+      log(`project clock ${clockHz / 1e6} MHz${sysclkHz ? `, RP2040 at ${sysclkHz / 1e6} MHz,` : ''} for the connect that follows`);
+    } else if (sc === 'connect') {
+      await cmdr.connect(new TcpSerialPort(), { clock: clockHz, sysclk: sysclkHz });
       check(cmdr.state().pass && cmdr.info.debugger === 'lisav1.2', `connected; debugger ${cmdr.info.debugger}, flash ${cmdr.info.flashId}, clock ${cmdr.info.clock}`);
     } else if (sc === 'direct') {
       const t = Date.now();

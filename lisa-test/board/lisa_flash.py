@@ -33,8 +33,15 @@ _SECTOR = 4096
 _PAGE = 256
 
 
-def lisa_select():
-    '''Enable tt_um_lisa, then reset it with its debug UART line idle.'''
+def lisa_select(clock=0, sysclk=0):
+    '''Enable tt_um_lisa, then reset it with its debug UART line idle.
+
+    clock: a project clock in Hz in place of the SDK's (50 MHz for this
+    project).  The RP2040's PWM reaches half its system clock, so that is
+    raised to twice the project clock first - an even divider, a clean
+    50 % clock - unless sysclk says what to run the RP2040 at; the UART
+    below is created after it, its baud follows the system clock.  The
+    reset then lets LISA's autobaud measure anew.'''
     sh = tt.shuttle
     if not sh.has('tt_um_lisa'):
         raise RuntimeError('tt_um_lisa is not on shuttle %s' % sh.run)
@@ -42,6 +49,11 @@ def lisa_select():
         tt.mode = RPMode.ASIC_RP_CONTROL
     if sh.tt_um_lisa.enable() is False:
         raise RuntimeError('the SDK refused to enable tt_um_lisa')
+    if clock:
+        sysclk = sysclk or 2 * clock
+        if machine.freq() != sysclk:
+            machine.freq(sysclk)
+        tt.clock_project_PWM(clock)
 
     # ui_in[7] low at reset selects autobaud.  Bring the debug RX line
     # (ui_in[3]) to UART idle before reset is released, so the autobaud
@@ -53,7 +65,8 @@ def lisa_select():
     tt.reset_project(False)
 
     print('@shuttle=%s' % sh.run)
-    print('@clock=%d' % (tt.auto_clocking_freq if tt.is_auto_clocking else 0))
+    print('@clock=%d' % (clock if clock else tt.auto_clocking_freq if tt.is_auto_clocking else 0))
+    print('@sysclk=%d' % machine.freq())
 
 
 def lisa_release():

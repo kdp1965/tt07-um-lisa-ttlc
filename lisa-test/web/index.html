@@ -1315,7 +1315,11 @@ class LisaCommander {
   }
   _changed() { this.onState(this.state()); }
 
-  async connect(port) {
+  // opts.clock: a project clock in Hz instead of the SDK's, opts.sysclk the
+  // RP2040's (lisa_select: twice the project clock unless given)
+  async connect(port, opts = {}) {
+    this.clockHz = opts.clock | 0;
+    this.sysclkHz = opts.sysclk | 0;
     this.link = new SerialLink(port, this.log);
     await this.link.open();
     this.board = new MpBoard(this.link, this.log);
@@ -1414,7 +1418,8 @@ class LisaCommander {
   async initLisa() {
     await this.board.stopPassthrough();
     let out;
-    try { out = await this.board.exec('lisa_select()\n', 20000); }
+    const select = `lisa_select(${this.clockHz || 0}, ${this.sysclkHz || 0})\n`;
+    try { out = await this.board.exec(select, 20000); }
     catch (e) {
       if (!/isn't defined|not defined|MemoryError/.test(e.message)) throw e;
       // the board was reset under us (its RAM state is gone) or its heap is
@@ -1424,12 +1429,12 @@ class LisaCommander {
       const { r } = parseResults(await this.board.exec(CODE.info));
       if (r.tt !== '1') throw new Error('the TT SDK did not come up after the reboot');
       await this._loadHelper();
-      out = await this.board.exec('lisa_select()\n', 20000);
+      out = await this.board.exec(select, 20000);
     }
     const { r, other } = parseResults(out);
     other.forEach(l => this.log('[board] ' + l, 'dim'));
     this.info.clock = +r.clock;
-    this.log(`tt_um_lisa enabled and reset (project clock ${fmtHz(+r.clock)})`);
+    this.log(`tt_um_lisa enabled and reset (project clock ${fmtHz(+r.clock)}, RP2040 at ${fmtHz(+r.sysclk)})`);
     await this.board.startPassthrough(CODE.passthrough);
     this.lisa.lisaHasUart = false; this.lisa.halted = true;
     this._changed();
