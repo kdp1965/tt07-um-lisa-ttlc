@@ -16,6 +16,12 @@ written to the `RPI-RP2` drive, and the board comes back with the TT SDK and
 the files on its flash intact.  By hand: `mpremote exec "import machine;
 machine.bootloader()"` then `cp micropython-lisa_spi_ram.uf2 /Volumes/RPI-RP2/`.
 
+Before flashing, the app reads the RP2040's whole flash back (MicroPython
+and its filesystem, 2 MB on the demo board) and saves it as a `.uf2` of the
+same shape as the stock Tiny Tapeout image - a download, and a copy in the
+browser - so the Board panel's "Restore…" can put it back; "Back up RP2040"
+does that alone, and "Restore…" takes any `.uf2` too.
+
 Rebuilding (macOS, see the notes in `lisa-tools`'s memory):
 
 ```sh

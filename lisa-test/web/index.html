@@ -131,12 +131,12 @@
     padding: 0; width: min(900px, 92vw); max-height: 88vh;
   }
   dialog#srcDlg::backdrop { background: rgba(0,0,0,.6); }
-  dialog#rp2Dlg {
+  dialog#rp2Dlg, dialog#rp2RestoreDlg {
     background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 12px;
     padding: 16px 18px; width: min(560px, 92vw); font-size: 13.5px;
   }
-  dialog#rp2Dlg::backdrop { background: rgba(0,0,0,.6); }
-  dialog#rp2Dlg p { margin: 8px 0; }
+  dialog#rp2Dlg::backdrop, dialog#rp2RestoreDlg::backdrop { background: rgba(0,0,0,.6); }
+  dialog#rp2Dlg p, dialog#rp2RestoreDlg p { margin: 8px 0; }
   #srcHead { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   #srcHead .tab { padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; font-size: 12.5px; color: var(--ink-2); }
   #srcHead .tab.on { background: var(--accent); color: #fff; border-color: transparent; }
@@ -195,9 +195,13 @@
   <aside class="controls">
 
     <div class="panel">
-      <h2>Board <span class="spacer"></span><button class="mini" id="btnReinit" disabled title="Re-select tt_um_lisa, reset it and redo the debugger setup">Re-init LISA</button></h2>
+      <h2>Board <span class="spacer"></span>
+        <button class="mini" id="btnRp2Backup" disabled title="Read the RP2040's whole flash (MicroPython and its files) back as a .uf2: downloaded, and kept in this browser for Restore">Back up RP2040</button>
+        <button class="mini" id="btnRp2Restore" disabled title="Flash the backup kept in this browser, or any .uf2, onto the RP2040">Restore…</button>
+        <button class="mini" id="btnReinit" disabled title="Re-select tt_um_lisa, reset it and redo the debugger setup">Re-init LISA</button></h2>
       <dl class="kv">
         <dt>Demo board</dt><dd id="kvBoard">—</dd>
+        <dt>RP2040</dt><dd id="kvMpy">—</dd>
         <dt>Shuttle</dt><dd id="kvShuttle">—</dd>
         <dt>Project clock</dt><dd id="kvClock">—</dd>
         <dt>SPI flash</dt><dd id="kvFlash">—</dd>
@@ -350,6 +354,16 @@
 <dialog id="srcDlg">
   <div id="srcHead"><span id="srcTabs" style="display:flex;gap:6px;flex-wrap:wrap"></span><span class="spacer"></span><button class="mini" id="srcClose">Close</button></div>
   <pre id="srcBody"></pre>
+</dialog>
+
+<dialog id="rp2RestoreDlg">
+  <b>Restore / flash the RP2040's firmware</b>
+  <p class="hint" id="rp2RestoreStored"></p>
+  <div class="actions"><button class="primary" id="rp2RestoreStoredBtn">Flash that backup</button></div>
+  <p class="hint" style="margin-top:14px">Or any <code>.uf2</code>: a backup you downloaded, the stock Tiny Tapeout demo-board image, a MicroPython build…
+    A whole-flash image (a backup, the stock image) also replaces the files on the board's flash.</p>
+  <input type="file" id="rp2RestoreFile" accept=".uf2">
+  <div class="actions" style="margin-top:10px"><button id="rp2RestoreFileBtn">Flash the file</button><button id="rp2RestoreCancel">Cancel</button></div>
 </dialog>
 
 <dialog id="rp2Dlg">
@@ -1058,6 +1072,27 @@ class LisaDebug {
 
 /* ---------------- firmware images ---------------- */
 
+// A UF2 for the RP2040 bootloader: 256-byte payloads from `base` in the XIP
+// window, the RP2040 family - the layout of the stock Tiny Tapeout image.
+function makeUf2(bytes, base = 0x10000000) {
+  const n = Math.ceil(bytes.length / 256);
+  const out = new Uint8Array(n * 512);
+  const dv = new DataView(out.buffer);
+  for (let i = 0; i < n; i++) {
+    const o = i * 512;
+    dv.setUint32(o, 0x0A324655, true); dv.setUint32(o + 4, 0x9E5D5157, true);
+    dv.setUint32(o + 8, 0x2000, true); dv.setUint32(o + 12, base + i * 256, true);
+    dv.setUint32(o + 16, 256, true); dv.setUint32(o + 20, i, true);
+    dv.setUint32(o + 24, n, true); dv.setUint32(o + 28, 0xE48BFF56, true);
+    out.set(bytes.subarray(i * 256, i * 256 + 256), o + 32);
+    dv.setUint32(o + 508, 0x0AB16F30, true);
+  }
+  return out;
+}
+
+const isUf2 = bytes => bytes.length >= 512 && bytes.length % 512 === 0
+  && new DataView(bytes.buffer, bytes.byteOffset).getUint32(0, true) === 0x0A324655;
+
 function toWords(bytes) {
   const words = new Array(bytes.length >> 1);
   for (let i = 0; i < words.length; i++) words[i] = bytes[2 * i] | (bytes[2 * i + 1] << 8);
@@ -1295,8 +1330,10 @@ const CODE = {
     "    print('@lisa=' + ('1' if tt.shuttle.has('tt_um_lisa') else '0'))\n" +
     "except NameError:\n" +
     "    print('@tt=0')\n" +
-    "import rp2\n" +
+    "import rp2, sys, machine, binascii\n" +
     "print('@spiram=' + ('1' if hasattr(rp2, 'enable_sim_spi_ram') else '0'))\n" +
+    "print('@mpy=' + sys.version.split(';')[-1].strip())\n" +
+    "print('@uid=' + binascii.hexlify(machine.unique_id()).decode())\n" +
     "print('@mem=%d' % gc.mem_free())\n",
   passthrough:
     "import sys, gc\n" +
@@ -1367,9 +1404,9 @@ class LisaCommander {
         other.forEach(l => this.log('[board] ' + l, 'dim'));
         if (r.tt !== '1') throw new Error('the TT SDK is not loaded');
         if (!r.sdk) throw new Error('this does not look like a Tiny Tapeout demo board running the TT SDK');
-        this.info = { sdk: r.sdk, shuttle: r.shuttle, mem: +r.mem, spiRam: r.spiram === '1' };
-        this.log(`TT SDK ${r.sdk}, shuttle ${r.shuttle}, ${r.mem} bytes of heap free; the RP2040's MicroPython `
-                 + (this.info.spiRam ? 'has the SPI RAM emulation' : 'lacks the SPI RAM emulation (no data cache)'));
+        this.info = { sdk: r.sdk, shuttle: r.shuttle, mem: +r.mem, spiRam: r.spiram === '1', mpy: r.mpy, uid: r.uid };
+        this.log(`TT SDK ${r.sdk}, shuttle ${r.shuttle}, ${r.mem} bytes of heap free; ${r.mpy} `
+                 + (this.info.spiRam ? 'with the SPI RAM emulation' : 'without the SPI RAM emulation (no data cache)'));
         this._changed();
         if (r.lisa !== '1') throw new Error(`tt_um_lisa is not on shuttle ${r.shuttle}; LISA was on TT06 and TT07`);
 
@@ -1384,6 +1421,47 @@ class LisaCommander {
         await this.board.softReboot();
       }
     }
+  }
+
+  // The RP2040's own flash through the XIP window at 0x10000000: its size
+  // (a chip repeats past its end, so a 2 MB part shows block 0 again at
+  // 2 MB) and the board's unique id.
+  async rp2FlashInfo() {
+    await this.board.stopPassthrough();
+    const { r } = parseResults(await this.board.exec(
+      "import uctypes, machine, binascii, gc\n" +
+      "gc.collect()\n" +
+      "_b0 = bytes(uctypes.bytearray_at(0x10000000, 4096))\n" +
+      "_mb = 16\n" +
+      "for _m in (2, 4, 8):\n" +
+      "    if bytes(uctypes.bytearray_at(0x10000000 + _m * 1048576, 4096)) == _b0:\n" +
+      "        _mb = _m\n" +
+      "        break\n" +
+      "del _b0\n" +
+      "print('@mb=%d' % _mb)\n" +
+      "print('@uid=' + binascii.hexlify(machine.unique_id()).decode())\n"));
+    if (!r.mb) throw new Error('could not size the RP2040 flash');
+    return { bytes: (+r.mb) << 20, uid: r.uid };
+  }
+
+  // The flash's contents - MicroPython and its filesystem - 2 KB at a time
+  // as base64 (uctypes.bytearray_at views the XIP window without copying).
+  async readRp2Flash(size, onProgress) {
+    await this.board.stopPassthrough();
+    const out = new Uint8Array(size);
+    const STEP = 16384;
+    await this.board.exec("import uctypes, binascii, gc\ngc.collect()\n");
+    for (let off = 0; off < size; off += STEP) {
+      const n = Math.min(STEP, size - off);
+      const text = await this.board.exec(
+        `for _o in range(${off}, ${off + n}, 2048):\n` +
+        "    print(binascii.b2a_base64(uctypes.bytearray_at(0x10000000 + _o, 2048)).decode(), end='')\n", 20000);
+      const chunk = bytesOf(atob(text.replace(/\s+/g, '')));
+      if (chunk.length !== n) throw new Error(`RP2040 flash read at 0x${off.toString(16)}: ${chunk.length} bytes instead of ${n}`);
+      out.set(chunk, off);
+      onProgress?.(off + n, size);
+    }
+    return out;
   }
 
   // Restart the RP2040 into its USB bootloader (the RPI-RP2 drive), to flash
@@ -1709,7 +1787,7 @@ class LisaCommander {
 const fmtHz = hz => !hz ? 'stopped' : hz >= 1e6 ? (hz / 1e6).toFixed(hz % 1e6 ? 2 : 0) + ' MHz'
   : hz >= 1e3 ? (hz / 1e3).toFixed(1) + ' kHz' : hz + ' Hz';
 
-root.LisaCore = { LisaCommander, LisaDebug, MpBoard, SerialLink, RxBuffer, parseFirmware, toWords, disassemble, disassembleWindow, ttlcDisassemble, hex2, hex4, hex6, fmtHz, T, CODE };
+root.LisaCore = { LisaCommander, LisaDebug, MpBoard, SerialLink, RxBuffer, parseFirmware, toWords, makeUf2, isUf2, disassemble, disassembleWindow, ttlcDisassemble, hex2, hex4, hex6, fmtHz, T, CODE };
 
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
@@ -1719,7 +1797,7 @@ root.LisaCore = { LisaCommander, LisaDebug, MpBoard, SerialLink, RxBuffer, parse
 /* ====================================================================
    UI glue: DOM, the console terminal, buttons.
    ==================================================================== */
-const { LisaCommander, parseFirmware, disassembleWindow, ttlcDisassemble, hex2, hex4, hex6, fmtHz } = window.LisaCore;
+const { LisaCommander, parseFirmware, makeUf2, isUf2, disassembleWindow, ttlcDisassemble, hex2, hex4, hex6, fmtHz } = window.LisaCore;
 const $ = id => document.getElementById(id);
 const enc = new TextEncoder();
 
@@ -1862,6 +1940,8 @@ function renderState(st) {
   }
   const i = st.info || {};
   $('kvBoard').textContent = i.sdk ? `TT SDK ${i.sdk}` + (i.mem ? ` (${(i.mem / 1024).toFixed(0)} KB heap free)` : '') : '—';
+  $('kvMpy').textContent = i.mpy ? i.mpy + (i.spiRam ? ', SPI RAM emulation' : ', no SPI RAM emulation') : '—';
+  ['btnRp2Backup', 'btnRp2Restore'].forEach(id => $(id).disabled = !st.connected || busy);
   $('kvShuttle').textContent = i.shuttle || '—';
   $('kvClock').textContent = i.clock !== undefined ? fmtHz(i.clock) : '—';
   $('kvFlash').textContent = i.flashId ? `JEDEC ID ${i.flashId}` + (i.flashId.startsWith('ef') ? ' (Winbond)' : '') : '—';
@@ -2264,21 +2344,112 @@ $('ttlcClk').addEventListener('change', () => guarded('Setting shift clock…', 
 const b64dec = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// The RP2040's flash read back - MicroPython and its filesystem, as a .uf2
+// the bootloader takes whole - downloaded, and kept in this browser under
+// the board's unique id for Restore.
+async function backupRp2040() {
+  const info = await cmdr.rp2FlashInfo();
+  log(`reading the RP2040's ${info.bytes >> 20} MB flash back (MicroPython and its files)…`);
+  const t0 = performance.now();
+  progress(0, info.bytes, 'backing up');
+  const bytes = await cmdr.readRp2Flash(info.bytes, (d, t) => progress(d, t, 'backing up'));
+  progress(info.bytes, info.bytes, 'done');
+  const uf2 = makeUf2(bytes);
+  const date = new Date();
+  const name = `rp2040-${info.uid}-${date.toISOString().slice(0, 19).replace(/[:T]/g, '-')}.uf2`;
+  downloadBytes(name, uf2);
+  let kept = true;
+  try { await idbPut(info.uid, { name, date: date.toISOString(), uf2 }); }
+  catch (e) { kept = false; log('could not keep the backup in this browser (' + (e.message || e) + '): the download is the only copy', 'err'); }
+  log(`backed up in ${((performance.now() - t0) / 1000).toFixed(0)} s: ${name} (${(uf2.length / 1048576).toFixed(1)} MB) downloaded` + (kept ? ' and kept in this browser for Restore' : ''), 'ok');
+  return { name, uf2 };
+}
+
+function downloadBytes(name, bytes) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+  a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+
+// IndexedDB: one backup per board
+function idbOpen() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('lisa-commander', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('rp2backup');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbPut(key, val) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('rp2backup', 'readwrite');
+    tx.objectStore('rp2backup').put(val, key);
+    tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
+  });
+}
+async function idbGet(key) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const rq = db.transaction('rp2backup').objectStore('rp2backup').get(key);
+    rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error);
+  });
+}
+
+// Restore: the backup kept for this board, or a .uf2 file.  Resolves to
+// { name, bytes, note } or null.
+async function chooseRp2Image() {
+  const uid = cmdr.info.uid;
+  const stored = uid ? await idbGet(uid).catch(() => null) : null;
+  $('rp2RestoreStored').textContent = stored
+    ? `A backup of this board from ${new Date(stored.date).toLocaleString()} is kept in this browser: ${stored.name} (${(stored.uf2.length / 1048576).toFixed(1)} MB).`
+    : 'No backup of this board is kept in this browser ("Back up RP2040" makes one and downloads it too).';
+  $('rp2RestoreStoredBtn').disabled = !stored;
+  $('rp2RestoreFile').value = '';
+  const dlg = $('rp2RestoreDlg');
+  return new Promise(resolve => {
+    const finish = v => { cleanup(); dlg.close(); resolve(v); };
+    const onStored = () => finish({ name: stored.name, bytes: stored.uf2, note: `the backup of ${new Date(stored.date).toLocaleString()}` });
+    const onFile = async () => {
+      const f = $('rp2RestoreFile').files[0];
+      if (!f) { log('choose a .uf2 file first', 'err'); return; }
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      if (!isUf2(bytes)) { log(`${f.name} is not a UF2 file`, 'err'); return; }
+      finish({ name: f.name, bytes, note: 'the file you chose' });
+    };
+    const onCancel = () => finish(null);
+    const cleanup = () => {
+      $('rp2RestoreStoredBtn').removeEventListener('click', onStored); $('rp2RestoreFileBtn').removeEventListener('click', onFile);
+      $('rp2RestoreCancel').removeEventListener('click', onCancel); dlg.removeEventListener('cancel', onCancel);
+    };
+    $('rp2RestoreStoredBtn').addEventListener('click', onStored); $('rp2RestoreFileBtn').addEventListener('click', onFile);
+    $('rp2RestoreCancel').addEventListener('click', onCancel); dlg.addEventListener('cancel', onCancel);
+    dlg.showModal();
+  });
+}
+
 async function offerRp2Flash() {
   const fw = window.LISA_ASSETS.rp2040;
   if (!fw) { log('this copy of the app has no RP2040 firmware embedded (firmware/rp2040, build_assets.py)', 'err'); return false; }
   const msg = `The data cache needs the RP2040 to emulate LISA's 32K SPI RAM, and this board's MicroPython cannot (no rp2.enable_sim_spi_ram).\n\n`
             + `Flash ${fw.name} (${(fw.size / 1024).toFixed(0)} KB) onto the RP2040 now?\n\n${fw.note}\n\n`
-            + `The board restarts into its bootloader and you will be asked to choose the RPI-RP2 drive that appears. `
-            + `The TT SDK and the files on the board's flash are kept.`;
+            + `First the RP2040's flash (MicroPython and its files) is read back and saved as a .uf2 - a download, also kept in this browser - `
+            + `so "Restore…" can put it back. Then the board restarts into its bootloader and you will be asked to choose the RPI-RP2 drive `
+            + `that appears. The TT SDK and the files on the board's flash are kept.`;
   if (!confirm(msg)) { log('RP2040 not flashed: the data cache stays unavailable on this board', 'dim'); return false; }
-  await flashRp2040(fw);
+  try { await backupRp2040(); }
+  catch (e) {
+    log('backup failed: ' + (e.message || e), 'err');
+    if (!confirm(`The backup failed (${e.message || e}). Flash ${fw.name} anyway, without a copy of the current firmware?`)) { log('RP2040 not flashed', 'dim'); return false; }
+  }
+  await flashRp2040({ name: fw.name, bytes: b64dec(fw.uf2), note: `md5 ${fw.md5}`, needSpiRam: true });
   return true;
 }
 
-async function flashRp2040(fw) {
-  const bytes = b64dec(fw.uf2);
-  log(`restarting the RP2040 into its bootloader (${fw.name}, ${bytes.length} bytes, md5 ${fw.md5})…`);
+async function flashRp2040({ name, bytes, note, needSpiRam }) {
+  const fw = { name, note: note || '' };
+  log(`restarting the RP2040 into its bootloader to flash ${name} (${bytes.length} bytes${note ? ', ' + note : ''})…`);
   await cmdr.enterBootloader();
   await waitForSerial(false, 10000);                    // the serial device goes away...
   await sleep(1500);                                    // ...and the RPI-RP2 drive mounts
@@ -2290,8 +2461,8 @@ async function flashRp2040(fw) {
   await sleep(3000);                                    // MicroPython boots, main.py loads the TT SDK
   cmdr.flashBase = flashBase();
   await cmdr.connect(port);
-  if (!cmdr.info.spiRam) throw new Error('the board came back, but its MicroPython still lacks the SPI RAM emulation');
-  log('RP2040 flashed: the data cache is available', 'ok');
+  if (needSpiRam && !cmdr.info.spiRam) throw new Error('the board came back, but its MicroPython still lacks the SPI RAM emulation');
+  log(`RP2040 flashed with ${name}` + (needSpiRam ? ': the data cache is available' : ''), 'ok');
 }
 
 // Wait for an RP2040 serial port the browser already has permission for to
@@ -2456,6 +2627,14 @@ $('btnStack').addEventListener('click', () => guarded('Reading RAM…', async ()
 $('btnGrant').addEventListener('click', () => guarded('…', async () => { await cmdr.grant(); log('UART handed to the LISA program (l)'); $('term').focus(); }));
 $('btnReclaim').addEventListener('click', () => guarded('Taking the UART back…', async () => { await cmdr.reclaim(); log('UART back with the debugger (+++)'); }));
 $('btnReinit').addEventListener('click', () => guarded('Re-initializing LISA…', async () => { cmdr.flashBase = flashBase(); await cmdr.initLisa(); }));
+$('btnRp2Backup').addEventListener('click', () => guarded('Backing up the RP2040…', backupRp2040));
+$('btnRp2Restore').addEventListener('click', () => guarded('Flashing the RP2040…', async () => {
+  const sel = await chooseRp2Image();
+  if (!sel) return;
+  if (!confirm(`Flash ${sel.name} (${(sel.bytes.length / 1024).toFixed(0)} KB, ${sel.note}) onto the RP2040?\n\n`
+             + `The board restarts into its bootloader and you will be asked to choose the RPI-RP2 drive that appears.`)) { log('RP2040 not flashed', 'dim'); return; }
+  await flashRp2040(sel);
+}));
 $('btnClearTerm').addEventListener('click', () => { term.clear(); $('term').focus(); });
 $('btnClearLog').addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); logEl.innerHTML = ''; });
 
