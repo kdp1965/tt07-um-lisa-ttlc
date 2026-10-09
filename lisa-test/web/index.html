@@ -131,6 +131,12 @@
     padding: 0; width: min(900px, 92vw); max-height: 88vh;
   }
   dialog#srcDlg::backdrop { background: rgba(0,0,0,.6); }
+  dialog#rp2Dlg {
+    background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; width: min(560px, 92vw); font-size: 13.5px;
+  }
+  dialog#rp2Dlg::backdrop { background: rgba(0,0,0,.6); }
+  dialog#rp2Dlg p { margin: 8px 0; }
   #srcHead { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   #srcHead .tab { padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; font-size: 12.5px; color: var(--ink-2); }
   #srcHead .tab.on { background: var(--accent); color: #fff; border-color: transparent; }
@@ -210,7 +216,7 @@
       <div class="hint" id="fwInfo">—</div>
       <div class="checkrow" style="margin-top:8px"><input type="checkbox" id="spiRam">
         <label for="spiRam">Data cache on the RP2040's SPI RAM (a 32K data space: programs built with <code>--tt07-cache</code>)</label></div>
-      <div class="hint" style="margin:0 0 0 23px">Needs the <code>lisa_spi_ram</code> MicroPython build on the board; set up after programming, before the run.</div>
+      <div class="hint" style="margin:0 0 0 23px">Needs the <code>lisa_spi_ram</code> MicroPython build on the RP2040 (the app offers to flash it, after asking); set up after programming, before the run.</div>
 
       <div style="margin-top:12px">
         <div class="checkrow"><input type="radio" name="method" id="mDirect" value="direct" checked>
@@ -344,6 +350,22 @@
 <dialog id="srcDlg">
   <div id="srcHead"><span id="srcTabs" style="display:flex;gap:6px;flex-wrap:wrap"></span><span class="spacer"></span><button class="mini" id="srcClose">Close</button></div>
   <pre id="srcBody"></pre>
+</dialog>
+
+<dialog id="rp2Dlg">
+  <b>Flash the RP2040's MicroPython</b>
+  <p id="rp2Text"></p>
+  <p class="hint">The board has restarted into its bootloader and a drive named <code>RPI-RP2</code> has appeared.
+    Choose it and the firmware is written there; the board then restarts with the new MicroPython (the TT SDK and the
+    files on its flash are kept) and the app reconnects.</p>
+  <p class="hint" id="rp2NoPicker" style="display:none">This browser cannot write to the drive itself: download the file, copy it to
+    <code>RPI-RP2</code>, then press "I copied it myself".</p>
+  <div class="actions" style="margin-top:12px">
+    <button class="primary" id="rp2Pick">Choose the RPI-RP2 drive…</button>
+    <button id="rp2Download">Download the .uf2</button>
+    <button id="rp2Done" title="After copying the file to RPI-RP2 by hand">I copied it myself</button>
+    <button id="rp2Cancel">Cancel</button>
+  </div>
 </dialog>
 
 <footer>
@@ -1273,6 +1295,8 @@ const CODE = {
     "    print('@lisa=' + ('1' if tt.shuttle.has('tt_um_lisa') else '0'))\n" +
     "except NameError:\n" +
     "    print('@tt=0')\n" +
+    "import rp2\n" +
+    "print('@spiram=' + ('1' if hasattr(rp2, 'enable_sim_spi_ram') else '0'))\n" +
     "print('@mem=%d' % gc.mem_free())\n",
   passthrough:
     "import sys, gc\n" +
@@ -1343,8 +1367,9 @@ class LisaCommander {
         other.forEach(l => this.log('[board] ' + l, 'dim'));
         if (r.tt !== '1') throw new Error('the TT SDK is not loaded');
         if (!r.sdk) throw new Error('this does not look like a Tiny Tapeout demo board running the TT SDK');
-        this.info = { sdk: r.sdk, shuttle: r.shuttle, mem: +r.mem };
-        this.log(`TT SDK ${r.sdk}, shuttle ${r.shuttle}, ${r.mem} bytes of heap free`);
+        this.info = { sdk: r.sdk, shuttle: r.shuttle, mem: +r.mem, spiRam: r.spiram === '1' };
+        this.log(`TT SDK ${r.sdk}, shuttle ${r.shuttle}, ${r.mem} bytes of heap free; the RP2040's MicroPython `
+                 + (this.info.spiRam ? 'has the SPI RAM emulation' : 'lacks the SPI RAM emulation (no data cache)'));
         this._changed();
         if (r.lisa !== '1') throw new Error(`tt_um_lisa is not on shuttle ${r.shuttle}; LISA was on TT06 and TT07`);
 
@@ -1359,6 +1384,18 @@ class LisaCommander {
         await this.board.softReboot();
       }
     }
+  }
+
+  // Restart the RP2040 into its USB bootloader (the RPI-RP2 drive), to flash
+  // another MicroPython onto it.  The serial port dies under the command.
+  async enterBootloader() {
+    await this.board.stopPassthrough();
+    this.link.closing = true;                    // no "serial read error" for the expected loss
+    try { await this.board.execStart('import machine\nmachine.bootloader()\n'); } catch (e) { /* the port is gone */ }
+    await this.link.close();
+    this.link = null; this.board = null; this.lisa = null;
+    this.info = {};
+    this._changed();
   }
 
   async disconnect() {
@@ -1894,6 +1931,9 @@ function selectFirmware() {
     return;
   }
   $('fwInfo').textContent = describeFw(currentFw);
+  // an image for the data cache chosen on a board whose MicroPython cannot emulate the SPI RAM
+  if (NEEDS_CACHE[v] && cmdr.connected && cmdr.info.spiRam === false && !busy)
+    guarded('Flashing the RP2040…', offerRp2Flash);
 }
 
 async function loadFile(file) {
@@ -2214,6 +2254,107 @@ $('ttlcClk').addEventListener('change', () => guarded('Setting shift clock…', 
   if (cmdr.state().ttlc.enabled) await cmdr.enableTtlc(cmdr.ttlc.base, ttlcClkDiv());
 }));
 
+/* ---------------- the RP2040's MicroPython ---------------- */
+
+// The data cache needs the RP2040 to emulate LISA's SPI RAM: Ken's
+// MicroPython build (firmware/rp2040, embedded by build_assets.py).  When the
+// board's lacks it: ask, restart the RP2040 into its bootloader, let the user
+// choose the RPI-RP2 drive (the File System Access API needs a click), write
+// the .uf2 there, wait for the serial port to come back and reconnect.
+const b64dec = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function offerRp2Flash() {
+  const fw = window.LISA_ASSETS.rp2040;
+  if (!fw) { log('this copy of the app has no RP2040 firmware embedded (firmware/rp2040, build_assets.py)', 'err'); return false; }
+  const msg = `The data cache needs the RP2040 to emulate LISA's 32K SPI RAM, and this board's MicroPython cannot (no rp2.enable_sim_spi_ram).\n\n`
+            + `Flash ${fw.name} (${(fw.size / 1024).toFixed(0)} KB) onto the RP2040 now?\n\n${fw.note}\n\n`
+            + `The board restarts into its bootloader and you will be asked to choose the RPI-RP2 drive that appears. `
+            + `The TT SDK and the files on the board's flash are kept.`;
+  if (!confirm(msg)) { log('RP2040 not flashed: the data cache stays unavailable on this board', 'dim'); return false; }
+  await flashRp2040(fw);
+  return true;
+}
+
+async function flashRp2040(fw) {
+  const bytes = b64dec(fw.uf2);
+  log(`restarting the RP2040 into its bootloader (${fw.name}, ${bytes.length} bytes, md5 ${fw.md5})…`);
+  await cmdr.enterBootloader();
+  await waitForSerial(false, 10000);                    // the serial device goes away...
+  await sleep(1500);                                    // ...and the RPI-RP2 drive mounts
+  const how = await pickRp2Drive(fw, bytes);            // 'written' or 'manual'; throws on cancel
+  log(how === 'written' ? `${fw.name} written to RPI-RP2; waiting for the board to restart…`
+                        : 'waiting for the board to restart with the new firmware…');
+  const port = await waitForSerial(true, 45000);
+  if (!port) throw new Error('the board did not come back as a serial port within 45 s: press "Connect board" once it has');
+  await sleep(3000);                                    // MicroPython boots, main.py loads the TT SDK
+  cmdr.flashBase = flashBase();
+  await cmdr.connect(port);
+  if (!cmdr.info.spiRam) throw new Error('the board came back, but its MicroPython still lacks the SPI RAM emulation');
+  log('RP2040 flashed: the data cache is available', 'ok');
+}
+
+// Wait for an RP2040 serial port the browser already has permission for to
+// appear (present = true) or to go away.
+async function waitForSerial(present, timeoutMs) {
+  const t0 = performance.now();
+  for (;;) {
+    const ports = await navigator.serial.getPorts();
+    const p = ports.find(p => (p.getInfo().usbVendorId === 0x2E8A));
+    if (!!p === present) return p || true;
+    if (performance.now() - t0 > timeoutMs) return null;
+    await sleep(500);
+  }
+}
+
+function pickRp2Drive(fw, bytes) {
+  const dlg = $('rp2Dlg');
+  const canPick = typeof window.showDirectoryPicker === 'function';
+  $('rp2Text').textContent = `${fw.name} (${(bytes.length / 1024).toFixed(0)} KB): ${fw.note}`;
+  $('rp2Pick').disabled = !canPick;
+  $('rp2NoPicker').style.display = canPick ? 'none' : '';
+  return new Promise((resolve, reject) => {
+    const finish = (fn, v) => { cleanup(); dlg.close(); fn(v); };
+    const onPick = async () => {
+      let dir;
+      try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); }
+      catch (e) { return; }                                             // chooser dismissed
+      try { await dir.getFileHandle('INFO_UF2.TXT'); }
+      catch (e) { log(`"${dir.name}" is not the RPI-RP2 drive (no INFO_UF2.TXT in it) - choose the drive itself`, 'err'); return; }
+      $('rp2Pick').disabled = true;
+      try {
+        const fh = await dir.getFileHandle(fw.name, { create: true });
+        const w = await fh.createWritable();
+        await w.write(bytes);
+        // the bootloader restarts the board as soon as the last block lands, so closing may fail
+        try { await w.close(); } catch (e) { log('the RPI-RP2 drive went away while the file was closed: the board has restarted', 'dim'); }
+      } catch (e) {
+        $('rp2Pick').disabled = false;
+        log('could not write to the drive: ' + (e.message || e), 'err');
+        return;
+      }
+      finish(resolve, 'written');
+    };
+    const onDownload = () => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+      a.download = fw.name; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    };
+    const onDone = () => finish(resolve, 'manual');
+    const onCancel = () => finish(reject, new Error('RP2040 flashing cancelled: the board is in its bootloader (the RPI-RP2 drive) - copy the .uf2 there by hand or press its reset button, then "Connect board"'));
+    const cleanup = () => {
+      $('rp2Pick').removeEventListener('click', onPick); $('rp2Download').removeEventListener('click', onDownload);
+      $('rp2Done').removeEventListener('click', onDone); $('rp2Cancel').removeEventListener('click', onCancel);
+      dlg.removeEventListener('cancel', onCancel);
+    };
+    $('rp2Pick').addEventListener('click', onPick); $('rp2Download').addEventListener('click', onDownload);
+    $('rp2Done').addEventListener('click', onDone); $('rp2Cancel').addEventListener('click', onCancel);
+    dlg.addEventListener('cancel', onCancel);                          // Escape
+    dlg.showModal();
+  });
+}
+
 /* ---------------- actions ---------------- */
 
 async function doConnect() {
@@ -2246,6 +2387,8 @@ async function doProgram() {
   const fw = currentFw;
   const direct = $('mDirect').checked;
   await guarded('Programming…', async () => {
+    if ($('spiRam').checked && cmdr.info.spiRam === false && !(await offerRp2Flash()))
+      throw new Error('not programmed: the image needs the data cache (untick "Data cache" to program it without)');
     const base = flashBase();
     const t0 = performance.now();
     progress(0, fw.words, 'programming');

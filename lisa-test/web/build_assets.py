@@ -12,6 +12,8 @@ sent to the board's RAM, so they are stripped of comments, docstrings and blank
 lines first: the RP2040 has little free heap once the TT SDK is loaded.
 '''
 import ast
+import base64
+import hashlib
 import json
 import os
 
@@ -43,6 +45,19 @@ def files(d, suffix=''):
             if not name.startswith('.') and name.endswith(suffix) and os.path.isfile(os.path.join(d, name))}
 
 
+def rp2040_firmware():
+    '''The MicroPython build with the SPI RAM emulation (firmware/rp2040/*.uf2),
+    base64 so the app can write it to the RPI-RP2 drive; the README's first
+    paragraph says where it came from.'''
+    d = os.path.join(FIRMWARE, 'rp2040')
+    name = next(n for n in sorted(os.listdir(d)) if n.endswith('.uf2'))
+    with open(os.path.join(d, name), 'rb') as f:
+        data = f.read()
+    note = read(os.path.join(d, 'README.md')).split('\n\n')[1].replace('\n', ' ')
+    return {'name': name, 'size': len(data), 'md5': hashlib.md5(data).hexdigest(),
+            'note': note, 'uf2': base64.b64encode(data).decode()}
+
+
 assets = {
     'uartPass.py': read(os.path.join(BOARD, 'uartPass.py')),
     'lisa_flash.py': strip_python(read(os.path.join(BOARD, 'lisa_flash.py'))),
@@ -51,6 +66,7 @@ assets = {
     'ttlc_firmware': files(os.path.join(FIRMWARE, 'ttlc'), '.hex'),   # TTLC (MC14500B) images
     'ttlc_sources': {**files(os.path.join(FIRMWARE, 'ttlc'), '.asm'),   # ...and their assembly + headers
                      **files(os.path.join(FIRMWARE, 'ttlc'), '.h')},
+    'rp2040': rp2040_firmware(),                            # the RP2040's MicroPython with the SPI RAM emulation
 }
 
 out = os.path.join(HERE, 'assets.js')
