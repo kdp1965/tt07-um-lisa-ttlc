@@ -374,7 +374,9 @@
     files on its flash are kept) and the app reconnects.</p>
   <p class="hint" id="rp2NoPicker" style="display:none">This browser cannot write to the drive itself: download the file, copy it to
     <code>RPI-RP2</code>, then press "I copied it myself".</p>
+  <p class="hint" id="rp2Status"></p>
   <div class="actions" style="margin-top:12px">
+    <button class="primary" id="rp2Saved" style="display:none">Write to the remembered RPI-RP2 drive</button>
     <button class="primary" id="rp2Pick">Choose the RPI-RP2 drive…</button>
     <button id="rp2Download">Download the .uf2</button>
     <button id="rp2Done" title="After copying the file to RPI-RP2 by hand">I copied it myself</button>
@@ -2489,51 +2491,87 @@ async function waitForSerial(present, timeoutMs) {
   }
 }
 
+const isRp2Drive = async dir => { try { await dir.getFileHandle('INFO_UF2.TXT'); return true; } catch (e) { return false; } };
+
+async function writeUf2To(dir, name, bytes) {
+  const fh = await dir.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(bytes);
+  // the bootloader restarts the board as soon as the last block lands, so closing may fail
+  try { await w.close(); } catch (e) { log('the RPI-RP2 drive went away while the file was closed: the board has restarted', 'dim'); }
+}
+
+// The RPI-RP2 drive has to be chosen in the browser's picker the first time
+// (a page cannot write to a disk on its own); the handle is then kept in
+// IndexedDB: next time one click asks permission without the picker, and
+// none at all once the browser persists the permission.
 function pickRp2Drive(fw, bytes) {
   const dlg = $('rp2Dlg');
   const canPick = typeof window.showDirectoryPicker === 'function';
   $('rp2Text').textContent = `${fw.name} (${(bytes.length / 1024).toFixed(0)} KB): ${fw.note}`;
   $('rp2Pick').disabled = !canPick;
+  $('rp2Saved').disabled = false;
+  $('rp2Saved').style.display = 'none';
+  $('rp2Status').textContent = '';
   $('rp2NoPicker').style.display = canPick ? 'none' : '';
   return new Promise((resolve, reject) => {
-    const finish = (fn, v) => { cleanup(); dlg.close(); fn(v); };
+    let done = false, saved = null;
+    const finish = (fn, v) => { if (done) return; done = true; cleanup(); dlg.close(); fn(v); };
+    const writeTo = async dir => {
+      $('rp2Pick').disabled = true; $('rp2Saved').disabled = true;
+      $('rp2Status').textContent = `writing ${fw.name}…`;
+      try { await writeUf2To(dir, fw.name, bytes); }
+      catch (e) {
+        $('rp2Pick').disabled = !canPick; $('rp2Saved').disabled = false; $('rp2Status').textContent = '';
+        log('could not write to the drive: ' + (e.message || e), 'err');
+        return;
+      }
+      try { await idbPut('drive', dir); } catch (e) { /* not remembered, then */ }
+      finish(resolve, 'written');
+    };
     const onPick = async () => {
       let dir;
       try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); }
       catch (e) { return; }                                             // chooser dismissed
-      try { await dir.getFileHandle('INFO_UF2.TXT'); }
-      catch (e) { log(`"${dir.name}" is not the RPI-RP2 drive (no INFO_UF2.TXT in it) - choose the drive itself`, 'err'); return; }
-      $('rp2Pick').disabled = true;
-      try {
-        const fh = await dir.getFileHandle(fw.name, { create: true });
-        const w = await fh.createWritable();
-        await w.write(bytes);
-        // the bootloader restarts the board as soon as the last block lands, so closing may fail
-        try { await w.close(); } catch (e) { log('the RPI-RP2 drive went away while the file was closed: the board has restarted', 'dim'); }
-      } catch (e) {
-        $('rp2Pick').disabled = false;
-        log('could not write to the drive: ' + (e.message || e), 'err');
-        return;
-      }
-      finish(resolve, 'written');
+      if (!(await isRp2Drive(dir))) { log(`"${dir.name}" is not the RPI-RP2 drive (no INFO_UF2.TXT in it) - choose the drive itself`, 'err'); return; }
+      await writeTo(dir);
     };
-    const onDownload = () => {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
-      a.download = fw.name; a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    const onSaved = async () => {                                       // the click the permission needs
+      let p = 'denied';
+      try { p = await saved.requestPermission({ mode: 'readwrite' }); } catch (e) { /* */ }
+      if (p !== 'granted') { log('no permission for the remembered drive: choose it instead', 'err'); return; }
+      if (!(await isRp2Drive(saved))) { log('the remembered RPI-RP2 drive is not mounted (yet): wait and try again, or choose it', 'err'); return; }
+      await writeTo(saved);
     };
+    const onDownload = () => downloadBytes(fw.name, bytes);
     const onDone = () => finish(resolve, 'manual');
     const onCancel = () => finish(reject, new Error('RP2040 flashing cancelled: the board is in its bootloader (the RPI-RP2 drive) - copy the .uf2 there by hand or press its reset button, then "Connect board"'));
     const cleanup = () => {
-      $('rp2Pick').removeEventListener('click', onPick); $('rp2Download').removeEventListener('click', onDownload);
+      $('rp2Pick').removeEventListener('click', onPick); $('rp2Saved').removeEventListener('click', onSaved);
+      $('rp2Download').removeEventListener('click', onDownload);
       $('rp2Done').removeEventListener('click', onDone); $('rp2Cancel').removeEventListener('click', onCancel);
       dlg.removeEventListener('cancel', onCancel);
     };
-    $('rp2Pick').addEventListener('click', onPick); $('rp2Download').addEventListener('click', onDownload);
+    $('rp2Pick').addEventListener('click', onPick); $('rp2Saved').addEventListener('click', onSaved);
+    $('rp2Download').addEventListener('click', onDownload);
     $('rp2Done').addEventListener('click', onDone); $('rp2Cancel').addEventListener('click', onCancel);
     dlg.addEventListener('cancel', onCancel);                          // Escape
     dlg.showModal();
+    // the remembered drive: written without a click if the browser kept the permission
+    (async () => {
+      saved = canPick ? await idbGet('drive').catch(() => null) : null;
+      if (!saved || done) return;
+      $('rp2Saved').style.display = '';
+      for (let i = 0; i < 24 && !done; i++) {
+        let p = 'prompt';
+        try { p = await saved.queryPermission({ mode: 'readwrite' }); } catch (e) { return; }
+        if (p !== 'granted') { $('rp2Status').textContent = 'the RPI-RP2 drive is remembered from last time: one click, no choosing'; return; }
+        if (await isRp2Drive(saved)) { await writeTo(saved); return; }
+        $('rp2Status').textContent = 'the RPI-RP2 drive is remembered and permitted; waiting for it to mount…';
+        await sleep(500);
+      }
+      if (!done) $('rp2Status').textContent = 'the remembered RPI-RP2 drive did not appear: choose it';
+    })();
   });
 }
 
