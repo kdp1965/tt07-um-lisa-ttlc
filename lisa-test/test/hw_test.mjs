@@ -410,6 +410,31 @@ try {
       await cmdr.ttlcTick(0);
       await cmdr.ttlcHalt();
       await cmdr.disableTtlc();
+    } else if (sc.startsWith('backup=')) {
+      // the RP2040's flash read back as the app's "Back up RP2040" does
+      // (rp2FlashInfo + readRp2Flash), written as a .uf2; the firmware part
+      // is compared with the embedded lisa_spi_ram build when that is what
+      // the board runs
+      const file = sc.slice(7);
+      const info = await cmdr.rp2FlashInfo();
+      check(info.bytes >= (2 << 20) && info.uid === cmdr.info.uid, `RP2040 flash ${info.bytes >> 20} MB, unique id ${info.uid}`);
+      const t = Date.now();
+      let last = 0;
+      const bytes = await cmdr.readRp2Flash(info.bytes, (d, n) => { if (d - last >= (256 << 10) || d === n) { last = d; log(`progress ${d >> 10}/${n >> 10} KB`); } });
+      const secs = (Date.now() - t) / 1000;
+      log(`read back in ${secs.toFixed(1)} s (${(info.bytes / 1024 / secs).toFixed(0)} KB/s)`);
+      const uf2 = globalThis.LisaCore.makeUf2(bytes);
+      fs.writeFileSync(file, uf2);
+      check(globalThis.LisaCore.isUf2(uf2) && uf2.length === info.bytes * 2, `${file}: ${uf2.length} bytes, ${uf2.length / 512} UF2 blocks`);
+      check(bytes[0] !== 0xff && bytes.subarray(0, 256).some(b => b !== bytes[0]), 'block 0 holds code (boot2), not blank flash');
+      const emb = Buffer.from(globalThis.LISA_ASSETS.rp2040.uf2, 'base64');
+      let same = 0, blocks = emb.length / 512;
+      for (let i = 0; i < blocks; i++) {
+        const target = emb.readUInt32LE(i * 512 + 12) - 0x10000000;
+        if (Buffer.compare(emb.subarray(i * 512 + 32, i * 512 + 288), Buffer.from(bytes.subarray(target, target + 256))) === 0) same++;
+      }
+      log(`${same} of the embedded build's ${blocks} blocks match the flash: the board ${same === blocks ? 'runs' : 'does not run'} ${globalThis.LISA_ASSETS.rp2040.name}`);
+      check(same === blocks || !cmdr.info.spiRam, 'a board with the emulation runs the embedded build');
     } else if (sc === 'disconnect') {
       await cmdr.disconnect();
       check(!cmdr.connected, 'disconnected');

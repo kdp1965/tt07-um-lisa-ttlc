@@ -1431,10 +1431,10 @@ class LisaCommander {
     const { r } = parseResults(await this.board.exec(
       "import uctypes, machine, binascii, gc\n" +
       "gc.collect()\n" +
-      "_b0 = bytes(uctypes.bytearray_at(0x10000000, 4096))\n" +
+      "_b0 = uctypes.bytearray_at(0x10000000, 4096)\n" +      // views: the heap is too fragmented for copies
       "_mb = 16\n" +
       "for _m in (2, 4, 8):\n" +
-      "    if bytes(uctypes.bytearray_at(0x10000000 + _m * 1048576, 4096)) == _b0:\n" +
+      "    if uctypes.bytearray_at(0x10000000 + _m * 1048576, 4096) == _b0:\n" +
       "        _mb = _m\n" +
       "        break\n" +
       "del _b0\n" +
@@ -1444,21 +1444,32 @@ class LisaCommander {
     return { bytes: (+r.mb) << 20, uid: r.uid };
   }
 
-  // The flash's contents - MicroPython and its filesystem - 2 KB at a time
-  // as base64 (uctypes.bytearray_at views the XIP window without copying).
+  // The flash's contents - MicroPython and its filesystem - 1 KB at a time
+  // as base64 (uctypes.bytearray_at views the XIP window without copying;
+  // the encoded KB is the only allocation, the TT SDK leaves little heap).
   async readRp2Flash(size, onProgress) {
     await this.board.stopPassthrough();
     const out = new Uint8Array(size);
     const STEP = 16384;
-    await this.board.exec("import uctypes, binascii, gc\ngc.collect()\n");
+    await this.board.exec("import uctypes, binascii, sys, gc\ngc.collect()\n");
     for (let off = 0; off < size; off += STEP) {
       const n = Math.min(STEP, size - off);
       const text = await this.board.exec(
-        `for _o in range(${off}, ${off + n}, 2048):\n` +
-        "    print(binascii.b2a_base64(uctypes.bytearray_at(0x10000000 + _o, 2048)).decode(), end='')\n", 20000);
-      const chunk = bytesOf(atob(text.replace(/\s+/g, '')));
-      if (chunk.length !== n) throw new Error(`RP2040 flash read at 0x${off.toString(16)}: ${chunk.length} bytes instead of ${n}`);
-      out.set(chunk, off);
+        `for _o in range(${off}, ${off + n}, 1024):\n` +
+        "    sys.stdout.write(binascii.b2a_base64(uctypes.bytearray_at(0x10000000 + _o, 1024)))\n", 20000);
+      // one base64 line per KB, each with its own padding (1024 is not a
+      // multiple of 3), so decoded line by line; whatever else is in a line
+      // is the REPL's (a raw-paste window ack can trail the code)
+      let got = 0;
+      for (const line of text.split(/\s+/)) {
+        const b64line = line.replace(/[^A-Za-z0-9+/=]/g, '');
+        if (!b64line) continue;
+        const chunk = bytesOf(atob(b64line));
+        if (got + chunk.length > n) throw new Error(`RP2040 flash read at 0x${off.toString(16)}: more than ${n} bytes came back`);
+        out.set(chunk, off + got);
+        got += chunk.length;
+      }
+      if (got !== n) throw new Error(`RP2040 flash read at 0x${off.toString(16)}: ${got} bytes instead of ${n}`);
       onProgress?.(off + n, size);
     }
     return out;
