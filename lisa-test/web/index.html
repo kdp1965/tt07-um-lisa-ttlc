@@ -1864,7 +1864,8 @@ async function guarded(label, fn) {
 
 const DEMO_LABELS = { bringup_tt07: 'Bring-up demo for TT07 (banner on "?")', bringup_tt06: 'Bring-up demo for TT06 (banner on "?")',
                       'sdcc_hello.ihx': 'Bring-up demo in C, sdcc -mlisa (banner on "?", count/sum on "s")',
-                      'lisa_monitor.ihx': 'LISA monitor, sdcc -mlisa --tt07-cache (Enter for the banner, then "help"; mr, mw, stack, free, calc)' };
+                      'lisa_monitor_small.ihx': 'LISA monitor for the 128-byte RAM (Enter for the banner, then "help"; calc in bf16 on the FPU)',
+                      'lisa_monitor.ihx': 'LISA monitor with the SPI RAM data cache, sdcc -mlisa --tt07-cache (calc: bf16 on the FPU against float32)' };
 // images that run with the data cache on the RP2040's SPI RAM (built with --tt07-cache)
 const NEEDS_CACHE = { 'lisa_monitor.ihx': true };
 const fwSel = $('fwSel');

@@ -137,6 +137,18 @@ try {
       const out = await waitConsole(/ALL PASSED|SOME FAILED/, 20000);
       console.log(out.replace(/\r/g, ''));
       check(/ALL PASSED/.test(out), `${path.basename(file)} reports ALL PASSED on the chip`);
+    } else if (sc.startsWith('run=')) {
+      // program an interactive image for the 128-byte RAM, start it and leave
+      // the console on the bridge (lisa_monitor's monitor_small.ihx)
+      const file = sc.slice(4);
+      const prog = parseFirmware(path.basename(file), fs.readFileSync(file));
+      check(prog.format === 'Intel HEX', `${file}: ${prog.words} words`);
+      await cmdr.programDirect(prog.bytes, 0, () => {});
+      consoleBuf = '';
+      await cmdr.run();
+      log(`${path.basename(file)} is running; the console stays on the bridge:`);
+      log('    socat -,raw,echo=0 TCP:localhost:5555      (or: nc localhost 5555; press Enter for the banner)');
+      process.exit(0);
     } else if (sc.startsWith('spiram=') || sc.startsWith('monitor=')) {
       // like ihx=, with the data cache on the RP2040's emulated SPI RAM (the
       // mbell_micropython lisa_spi_ram build: rp2.enable_sim_spi_ram): CE1 on
