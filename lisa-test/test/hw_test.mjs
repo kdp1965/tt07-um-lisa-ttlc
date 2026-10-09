@@ -30,7 +30,7 @@ const assetsJs = fs.readFileSync(WEB + '/assets.js', 'utf8');
 globalThis.window = globalThis;
 vm.runInThisContext(assetsJs);
 vm.runInThisContext(core);
-const { LisaCommander, parseFirmware } = globalThis.LisaCore;
+const { LisaCommander, parseFirmware, hex2, hex4 } = globalThis.LisaCore;
 
 class TcpSerialPort {
   async open() {
@@ -237,7 +237,10 @@ try {
       let prev = r2;
       for (let i = 0; i < 12; i++) {
         const r = await cmdr.step();
-        const exp = globalThis.LisaCore.LisaDebug.nextPCs(words[prev.pc], prev.pc, prev.ra, prev.ix);
+        // a store runs on past itself (the TT07 breakpoint hazard): then the
+        // step's own targets, which it moved, are the addresses to expect
+        const D = globalThis.LisaCore.LisaDebug;
+        const exp = D.isStore(words[prev.pc]) ? r.step.targets : D.nextPCs(words[prev.pc], prev.pc, prev.ra, prev.ix);
         check(r.step.completed && exp.includes(r.pc) && r.halted,
           `step ${i + 1}: ${words[prev.pc].toString(16).padStart(4, '0')} at ${prev.pc.toString(16)} -> PC ${r.pc.toString(16)} (expected one of ${exp.map(x => x.toString(16)).join('/')})`);
         prev = r;
@@ -435,6 +438,41 @@ try {
       }
       log(`${same} of the embedded build's ${blocks} blocks match the flash: the board ${same === blocks ? 'runs' : 'does not run'} ${globalThis.LISA_ASSETS.rp2040.name}`);
       check(same === blocks || !cmdr.info.spiRam, 'a board with the emulation runs the embedded build');
+    } else if (sc.startsWith('hazard=')) {
+      // the TT07 breakpoint hazard on sdcc_test's test_core.ihx: stop at
+      // line 31 (0x2b5: ldi #4; push a; ldi #3; jal shl), Step across the
+      // push - it must land (a halt right after it would lose it) - run on
+      // to ALL PASSED, then Halt the final loop by breakpoint
+      const file = sc.slice(7);
+      const prog = parseFirmware(path.basename(file), fs.readFileSync(file));
+      await cmdr.programDirect(prog.bytes, 0, () => {});
+      const L = cmdr.lisa;
+      await L.haltNow();
+      await L.send('t'); await sleep(50); await L.version();
+      for (let i = 0; i < 4; i++) await L.writeReg(8 + i, 0);
+      await L.writeReg(8, 0x8000 | 0x2b5);
+      consoleBuf = '';
+      await L.resume(); await L.grant();
+      await sleep(1500);
+      await L.reclaim();
+      let r = await L.readRegs();
+      check(r.halted && r.pc === 0x2b5, `stopped at line 31 (PC 0x${hex4(r.pc)}) after ${JSON.stringify(consoleBuf.trim())}`);
+      await L.writeReg(8, 0);
+      await L.writeReg(7, 0x75); await L.writeReg(6, 0x99); await L.writeReg(7, 0);   // a marker in the argument's slot
+      const s1 = await L.step();
+      check(s1.completed && s1.newPC === 0x2b6 && !s1.past, `step ldi #4 -> 0x${hex4(s1.newPC)}`);
+      const s2 = await L.step();
+      check(s2.completed && s2.past && s2.newPC === 0x2b8, `step push a ran on past the store to 0x${hex4(s2.newPC)}`);
+      const slot = (await L.readRam(0x75, 1))[0];
+      check(slot === 4, `the push landed: RAM[0x75] = 0x${hex2(slot)} (0x99 = lost)`);
+      consoleBuf = '';
+      await L.resume(); await L.grant();
+      await waitConsole(/ALL PASSED|SOME FAILED/, 8000);
+      check(/ALL PASSED/.test(consoleBuf) && !/FAIL/.test(consoleBuf), 'test_core still passes after the steps: ' + consoleBuf.trim().split('\n').slice(-2).join(' | '));
+      await L.reclaim();
+      const h = await L.halt();
+      r = await L.readRegs();
+      check(h.safe && r.halted, `Halt by breakpoint on the running loop (PC sampled ${h.samples.map(hex4).join(' ')}, planted ${h.cand.map(hex4).join(' ')}) -> PC 0x${hex4(r.pc)}`);
     } else if (sc === 'disconnect') {
       await cmdr.disconnect();
       check(!cmdr.connected, 'disconnected');

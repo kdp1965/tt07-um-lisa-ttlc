@@ -800,13 +800,100 @@ class LisaDebug {
     await this.writeReg(0x10, addr & 0xffff);
   }
 
-  async halt() {
+  // An immediate, asynchronous halt - for programming and restarting, where
+  // the program's state does not matter (see halt()).
+  async haltNow() {
     await this.ensureDebugger();
     // the debugger sends 's' when the core stops (not if it was halted already);
     // the version request behind it re-synchronizes either way
     await this.send('w000001\n');
     await this.cmd('v', /lisav[0-9.]+\r?\n\r/, 600, 'the halt');
     this.halted = true;
+  }
+
+  // ---- the TT07 breakpoint hazard ----
+  // A store's RAM write completes in the fetch cycle after its instruction;
+  // a hardware breakpoint on the next instruction raises `stop` in that very
+  // cycle, and while stopped the data address is IX and the data the
+  // debugger's last written byte (lisa_core.v: d_addr = stop ? ix, d_o =
+  // dbg_di).  So a halt right after a store drops the store and overwrites
+  // RAM[IX] - measured on the chip.  No breakpoint is planted right after a
+  // store, and halting goes by breakpoints too (lisa-tools/lisa_cdb has the
+  // same logic for lisa_ide).
+
+  // writes data RAM: the RTL's d_we_r list (sta/stax, dcx/inx, swap/swapi,
+  // stxx, shl16/shr16, push a, sra, push ix, div/rem)
+  static isStore(op) {
+    if (!(op & 0x8000)) return false;
+    const t5 = op >> 11, t6 = op >> 10, t7 = op >> 9, t10 = op >> 6, t14 = op >> 2, t12 = op >> 4;
+    return t5 === 0x1f || t6 === 0x27 || t6 === 0x39 || t6 === 0x3b || t6 === 0x37 || t7 === 0x67 ||
+           t12 === 0xa02 || t12 === 0xa03 || t10 === 0x282 || t14 === 0x2858 || t14 === 0x285a ||
+           t12 === 0xa30 || t12 === 0xa31;
+  }
+
+  // jal, branches, returns, call/jmp ix, if, ldx, xchg: not straight on
+  static isTransfer(op) {
+    if (!(op & 0x8000)) return true;
+    const t5 = op >> 11, t6 = op >> 10, t9 = op >> 7, t10 = op >> 6, t11 = op >> 5;
+    return t5 === 0x15 || t5 === 0x16 || t5 === 0x17 || t6 === 0x23 || t9 === 0x114 ||
+           t10 === 0x22c || t10 === 0x22d || t10 === 0x22e || t11 === 0x454 || t11 === 0x455 ||
+           (op >> 8) === 0xa2 || (op >> 4) === 0xa18 || ((op >> 2) & 0x3ffc) === 0x22b0;
+  }
+
+  // The first address at or after x, run straight on from it, whose
+  // fall-through predecessor is not a store: x itself if x - 1 is not one;
+  // null if a control transfer comes first.  `code` caches flash words.
+  async safeStop(x, code = new Map()) {
+    const word = async a => {
+      a &= 0x7fff;
+      if (!code.has(a)) { const w = await this.readProgram(a, 16); w.forEach((v, i) => code.set((a + i) & 0x7fff, v)); }
+      return code.get(a);
+    };
+    let a = x & 0x7fff;
+    for (let i = 0; i < 16 && LisaDebug.isStore(await word(a - 1)); i++) {
+      if (LisaDebug.isTransfer(await word(a))) return null;
+      a = (a + 1) & 0x7fff;
+    }
+    return a;
+  }
+
+  // Halt without the hazard.  A program being stopped is nearly always in a
+  // loop, and PC can be read while the core runs: sample it, plant
+  // breakpoints at the safe addresses among the samples, let the loop come
+  // round into one.  Only if none is hit within a second (not a loop, or
+  // nothing safe in it) the asynchronous halt, with a warning.  The
+  // breakpoint registers are put back.
+  async halt() {
+    await this.ensureDebugger();
+    if ((await this.readReg(0)) & 1) { this.halted = true; return { safe: true }; }
+    const samples = [];
+    for (let i = 0; i < 8; i++) { const p = await this.readReg(2); if (!samples.includes(p)) samples.push(p); }
+    const code = new Map(), cand = [];
+    for (const p of samples) {
+      const s = await this.safeStop(p, code);
+      if (s !== null && !cand.includes(s) && cand.length < 4) cand.push(s);
+    }
+    const saved = [];
+    for (let i = 0; i < 4; i++) saved.push(await this.readReg(8 + i));
+    let safe = false;
+    try {
+      if (cand.length) {
+        for (let i = 0; i < 4; i++) await this.writeReg(8 + i, i < cand.length ? 0x8000 | cand[i] : 0);
+        for (let t = 0; t < 1000 && !safe; t += 50) {
+          if ((await this.readReg(0)) & 1) safe = true; else await sleep(30);
+        }
+      }
+      if (!safe) {
+        this.log(`no safe address in the loop the program is running (PC sampled at ${samples.map(hex4).join(' ')}): ` +
+                 'halted asynchronously - if it stopped right after a store, that store is lost and RAM[IX] overwritten (TT07)', 'err');
+        await this.send('w000001\n');
+      }
+    } finally {
+      for (let i = 0; i < 4; i++) await this.writeReg(8 + i, saved[i]);
+    }
+    await this.cmd('v', /lisav[0-9.]+\r?\n\r/, 600, 'the halt');      // re-synchronize past the 's'
+    this.halted = true;
+    return { safe, samples, cand };
   }
 
   async resume() { await this.ensureDebugger(); await this.writeReg(0, 2); this.halted = false; }
@@ -890,7 +977,20 @@ class LisaDebug {
     if (!this.halted) await this.halt();
     const pc = await this.readReg(2), ra = await this.readReg(4) & 0x7fff, ix = await this.readReg(5) & 0x7fff;
     const op = await this.readOpcode(pc);
-    const targets = [...new Set(LisaDebug.nextPCs(op, pc, ra, ix))].filter(t => t !== pc).slice(0, 6);
+    let next = LisaDebug.nextPCs(op, pc, ra, ix);
+    // a store runs on with what follows it, to an instruction safe to halt at
+    let past = false;
+    if (LisaDebug.isStore(op)) {
+      const code = new Map();
+      const moved = [];
+      for (const t of next) {                                       // one debugger transaction at a time
+        const s = await this.safeStop(t, code);
+        if (s !== null && s !== t) past = true;
+        moved.push(s === null ? t : s);
+      }
+      next = moved;
+    }
+    const targets = [...new Set(next)].filter(t => t !== pc).slice(0, 4);
     if (!targets.length) throw new Error(`cannot step at 0x${hex4(pc)}: opcode ${hex4(op)} only leads back to itself`);
     for (let i = 0; i < targets.length; i++) await this.writeReg(8 + i, 0x8000 | targets[i]);
     let completed = true;
@@ -905,7 +1005,7 @@ class LisaDebug {
     }
     await this.cmd('v', /lisav[0-9.]+\r?\n\r/, 600, 'the step');
     this.halted = true;
-    return { pc, op, targets, completed, newPC: await this.readReg(2) };
+    return { pc, op, targets, completed, past, newPC: await this.readReg(2) };
   }
 
   // ---- sideband: run one line of Python on the board through the pass-through
@@ -1039,7 +1139,7 @@ class LisaDebug {
   // round trip (write, then poll the flash status until it is idle).
   async programFlash(bytes, base, onProgress) {
     const words = toWords(bytes);
-    await this.halt();
+    await this.haltNow();
     await this.setPC(0);
     for (let a = base; a < base + bytes.length; a += 0x10000) {      // 64 KB block erase(s)
       await this.setDebugAddress(a);
@@ -1059,7 +1159,7 @@ class LisaDebug {
 
   async verifyFlash(bytes, base, onProgress) {
     const words = toWords(bytes);
-    await this.halt();
+    await this.haltNow();
     await this.setDebugAddress(base);
     const bad = [];
     for (let i = 0; i < words.length; i++) {
@@ -1722,7 +1822,7 @@ class LisaCommander {
   // ---- run control ----
 
   async run() {
-    await this.lisa.halt();
+    await this.lisa.haltNow();
     await this.lisa.setPC(0);
     await this.lisa.resume();
     await this.lisa.grant();
@@ -1764,7 +1864,7 @@ class LisaCommander {
     this.log("data cache on: the 32K data space is the RP2040's SPI RAM on CS1", 'ok');
   }
 
-  async halt()   { await this.lisa.halt(); this._changed(); }
+  async halt()   { const h = await this.lisa.halt(); this._changed(); return h; }
   async resume() { await this.lisa.resume(); await this.lisa.grant(); this._changed(); }
   async step()   { const st = await this.lisa.step(); const r = await this.lisa.readRegs(); this._changed(); return { ...r, step: st }; }
   async reset()  { await this.lisa.resetCore(); this._changed(); }
@@ -2653,12 +2753,12 @@ $('btnConnect').addEventListener('click', doConnect);
 $('btnProgram').addEventListener('click', doProgram);
 $('btnVerify').addEventListener('click', doVerify);
 $('btnRun').addEventListener('click', () => guarded('Starting…', async () => { await cmdr.run(); log('running from PC 0; the console is attached to LISA\'s UART'); $('term').focus(); }));
-$('btnHalt').addEventListener('click', () => guarded('Halting…', async () => { await cmdr.halt(); const r = await cmdr.readRegs(); showRegs(r); log(`halted at PC 0x${hex4(r.pc)}`); }));
+$('btnHalt').addEventListener('click', () => guarded('Halting…', async () => { const h = await cmdr.halt(); const r = await cmdr.readRegs(); showRegs(r); log(`halted at PC 0x${hex4(r.pc)}` + (h && h.safe && h.samples ? ' (by a breakpoint on the loop it was running)' : '')); }));
 $('btnResume').addEventListener('click', () => guarded('Resuming…', async () => { await cmdr.resume(); log('resumed; the console is attached to LISA\'s UART'); $('term').focus(); }));
 $('btnStep').addEventListener('click', () => guarded('Stepping…', async () => {
   const r = await cmdr.step(); showRegs(r);
   const st = r.step;
-  if (st.completed) log(`stepped: ${hex4(st.op)} at 0x${hex4(st.pc)} → PC 0x${hex4(r.pc)}`, 'dim');
+  if (st.completed) log(`stepped: ${hex4(st.op)} at 0x${hex4(st.pc)} → PC 0x${hex4(r.pc)}` + (st.past ? ' (a store: run on past it - a halt right after a store loses it on TT07)' : ''), 'dim');
   else log(`step did not complete within 1 s (the program never reached ${st.targets.map(t => '0x' + hex4(t)).join(' / ')}); halted at PC 0x${hex4(r.pc)}`, 'err');
 }));
 $('btnReset').addEventListener('click', () => guarded('Resetting…', async () => { await cmdr.reset(); const r = await cmdr.readRegs(); showRegs(r); log(`core reset (PC 0x${hex4(r.pc)}, ${r.halted ? 'halted' : 'running'})`); }));

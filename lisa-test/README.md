@@ -150,6 +150,20 @@ TT07 board:
   it can continue at — fall-through, branch target, RA for `ret`/`rc`/`rz`/`reti`,
   IX for `call ix`/`jmp ix` — resumes, waits for the halt, and clears them. `rets`
   (returns to IA, not readable) only gets the fall-through breakpoint.
+* **A halt right after a store loses the store and overwrites RAM[IX].** A
+  store's RAM write completes in the fetch cycle after its instruction; a
+  hardware breakpoint on the next instruction raises `stop` in that very cycle,
+  and while stopped the data address is IX and the data the debugger's last
+  written byte (`lisa_core.v`: `d_addr = stop ? ix`, `d_o = dbg_di`). Measured:
+  stopped right after `push a`, the slot kept a marker and RAM[IX] got 0x02, the
+  data byte of the resume command. So the app never halts there: Step runs a
+  store (`sta`/`stax`, `dcx`/`inx`, `swap`, `stxx`, `shl16`/`shr16`, `push`,
+  `sra`, `div`/`rem`) on to the first instruction that is safe to halt at, and
+  **Halt** samples PC while the program runs (register 2 reads live), plants
+  breakpoints on the safe addresses of the loop it is in and lets it run into
+  one — only if none is hit within a second does it fall back to the plain halt,
+  with a warning. Programming and Run (restart from 0) still halt immediately.
+  `test/hw_test.mjs hazard=<test_core.ihx>` checks it on the chip.
 * **Reading register 0xf advances PC.** Any access to the "current opcode"
   register increments PC afterwards (`dbg_inc`: it is meant for loading code),
   which looks like "stepping" if you poll it. The app never touches 0xf; the
